@@ -1,0 +1,71 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+:root {
+	--tw-animate-duration: 1000ms;
+	--tw-animate-delay: 0ms;
+	--tw-animate-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+	--header-height: 64px;
+}
+
+@theme {
+	--background: #f0f0f0;
+	--color-primary: #215296;
+	--color-secondary: #e0e0e0;
+}
+
+@font-face {
+	font-family: 'Lato';
+	src: url('/fonts/Lato-Regular.woff2') format('woff2'),
+		url('/fonts/Lato-Regular.woff') format('woff'),
+		url('/fonts/Lato-Regular.ttf') format('truetype');
+	font-weight: 400;
+	font-style: normal;
+}
+@font-face {
+	font-family: 'Lato';
+	src: url('/fonts/Lato-Bold.woff2') format('woff2'),
+		url('/fonts/Lato-Bold.woff') format('woff'),
+		url('/fonts/Lato-Bold.ttf') format('truetype');
+	font-weight: 700;
+	font-style: normal;
+}
+@font-face {
+	font-family: 'Lato';
+	src: url('/fonts/Lato-Black.ttf') format('truetype');
+	font-weight: 900;
+	font-style: normal;
+}
+@font-face {
+	font-family: 'Lato';
+	src: url('/fonts/Lato-Light.ttf') format('truetype');
+	font-weight: 300;
+	font-style: normal;
+}
+@font-face {
+	font-family: 'Lato';
+	src: url('/fonts/Lato-Thin.ttf') format('truetype');
+	font-weight: 100;
+	font-style: normal;
+}
+
+body {
+	font-family: 'Lato', sans-serif;
+}
+.room-builder-page {
+	display: flex;
+	height: calc(100dvh - var(--header-height));
+}
+
+h1 {
+	font-size: 2rem;
+	font-weight: 600;
+}
+
+button {
+	cursor: pointer;
+}
+
+.side-bar-nav-btn {
+	@apply fixed max-w-[428px] w-full right-0 bottom-0 flex justify-center gap-5 mt-auto bg-[#E0E0E0];
+}
