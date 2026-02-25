@@ -1,0 +1,28 @@
+definitions:
+  steps:
+    - step: &regular_develop
+        name: "[Dev] Regular Deploy"
+        deployment: staging
+        script:
+          - echo "Deploy (Develop)"
+          - pipe: atlassian/ssh-run:0.2.2
+            variables:
+              SSH_USER: 'ubuntu'
+              SERVER: '65.109.156.248'
+              COMMAND: |
+                cd /home/ubuntu/3d/3d-appmania &&
+                git fetch &&
+                git checkout $BITBUCKET_BRANCH &&
+                git config pull.rebase false &&
+                git pull origin $BITBUCKET_BRANCH &&
+                make d_node_install && 
+                make d_node_build
+
+pipelines:
+  branches:
+    main:
+      - step: *regular_develop
+
+  custom:
+    Dev - Regular deploy:
+      - step: *regular_develop
