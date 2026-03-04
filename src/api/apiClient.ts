@@ -77,7 +77,7 @@ _apiClient.interceptors.response.use(
 
 		if (error.response?.status === 403) {
 			console.error('Access denied:', error.response?.data?.message)
-			window.location.href = '/403'
+			// Let calling code / react-query handle the 403 gracefully
 		}
 
 		return Promise.reject(error)

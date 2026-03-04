@@ -135,6 +135,27 @@ export function CeilingCanvas() {
 	const panStartRef = useRef({ x: 0, y: 0 })
 	const [panMode, setPanMode] = useState(false)
 
+	// ── Center the ceiling rectangle on the canvas on first render ──
+	const computeCenteredOffset = useCallback(
+		(z: number) => {
+			if (!canvasRef.current) return { x: 0, y: 0 }
+			const { width, height } = canvasRef.current.getBoundingClientRect()
+			return {
+				x: (width - ceilingWidth * z) / 2,
+				y: (height - ceilingHeight * z) / 2,
+			}
+		},
+		[ceilingWidth, ceilingHeight]
+	)
+
+	useEffect(() => {
+		// Use rAF so the canvas has been laid out and has real dimensions
+		const id = requestAnimationFrame(() => {
+			setPanOffset(computeCenteredOffset(1))
+		})
+		return () => cancelAnimationFrame(id)
+	}, [computeCenteredOffset])
+
 	const [dragging, setDragging] = useState<{
 		id: string
 		offsetX: number
@@ -146,8 +167,8 @@ export function CeilingCanvas() {
 	const zoomOut = useCallback(() => setZoom((z) => Math.max(z - 0.15, 0.3)), [])
 	const resetView = useCallback(() => {
 		setZoom(1)
-		setPanOffset({ x: 0, y: 0 })
-	}, [])
+		setPanOffset(computeCenteredOffset(1))
+	}, [computeCenteredOffset])
 	const toggleFullscreen = useCallback(() => {
 		const el = canvasRef.current
 		if (!el) return

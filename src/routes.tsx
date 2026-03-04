@@ -2,6 +2,7 @@ import { useRoutes } from 'react-router-dom'
 import Home from './components/container/page'
 import CreateRoomPage from './app/page'
 import EditRoomPage from './app/room-builder/edit-room/page'
+import ForbiddenPage from './app/403/page'
 import EditRoomCategoryPage from './app/room-builder/edit-room/[id]/[category]/page'
 import WorksurfacesPage from './app/room-builder/edit-room/[id]/[category]/worksurfaces/page'
 import BacksplashesPage from './app/room-builder/edit-room/[id]/[category]/backsplashes/page'
@@ -18,6 +19,7 @@ export default function AppRoutes() {
 	return useRoutes([
 		{ path: PAGES_PATHS.home, element: <Home /> },
 		{ path: PAGES_PATHS.createRoom, element: <CreateRoomPage /> },
+		{ path: PAGES_PATHS.forbidden, element: <ForbiddenPage /> },
 		{
 			path: `${PAGES_PATHS.editRoom}/:id`,
 			element: <EditRoomPage />,

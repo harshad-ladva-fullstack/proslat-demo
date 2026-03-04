@@ -5,5 +5,6 @@ export const PAGES_PATHS = {
 	editRoomCategory: '/room-builder/edit-room/:id/:category',
 	editRoomCategoryStep: '/room-builder/edit-room/:id/:category/:step',
 
+	forbidden: '/403',
 	notFound: '*',
 }

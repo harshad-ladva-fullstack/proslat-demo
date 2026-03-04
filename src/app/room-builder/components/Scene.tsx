@@ -117,10 +117,15 @@ export const Scene = ({ id }: SceneProps) => {
 		return out
 	}, [currentRoomModel])
 
-	const { data: projectData } = useQuery({
+	const {
+		data: projectData,
+		isError: isProjectError,
+		error: projectError,
+	} = useQuery({
 		queryKey: [id, QUERY_KEYS.project],
 		queryFn: () => fetchGetProjectById(Number(id)),
 		enabled: !!id,
+		retry: false,
 	})
 
 	useMemo(() => {
@@ -338,6 +343,25 @@ export const Scene = ({ id }: SceneProps) => {
 		floorMesh,
 		currentRoomModel,
 	])
+
+	if (isProjectError) {
+		const status = (projectError as { response?: { status?: number } })
+			?.response?.status
+		return (
+			<div className='flex flex-col items-center justify-center w-full h-full gap-4 text-center'>
+				<h2 className='text-2xl font-semibold text-gray-200'>
+					{status === 403
+						? 'Access Denied'
+						: 'Project Not Found'}
+				</h2>
+				<p className='text-gray-400 max-w-sm'>
+					{status === 403
+						? "You don't have permission to access this project."
+						: 'This project could not be loaded.'}
+				</p>
+			</div>
+		)
+	}
 
 	return (
 		<div
