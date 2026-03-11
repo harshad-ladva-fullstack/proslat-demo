@@ -1,87 +1,45 @@
 import {
 	useRef,
-	useState,
 	useCallback,
-	useEffect,
 	type DragEvent,
 	type ChangeEvent,
 } from 'react'
-import { useGLTF } from '@react-three/drei'
-import { useRoomBuilderStore } from '@/store/useRoomBuilderStore'
-import { useNavigate } from 'react-router-dom'
-import { useMutation } from '@tanstack/react-query'
-import { fetchCreateProject, fetchUploadProjectModel } from '@/api/project'
 
-const SceneSaver = ({ url }: { url: string }) => {
-	const { scene } = useGLTF(url)
-	const { addRoomModel } = useRoomBuilderStore()
-
-	useEffect(() => {
-		addRoomModel(scene)
-	}, [addRoomModel, scene])
-
-	return null
+interface ModelLoaderProps {
+	/** Must be non-empty before a file can be selected. */
+	disabled?: boolean
+	/** Called whenever the user selects or drops a GLB file. */
+	onFileSelected: (file: File) => void
+	/** Currently selected file, used to show its name. */
+	selectedFile: File | null
 }
 
-export const ModelLoader = ({ name }: { name: string }) => {
-	const { setIsCustomRoom } = useRoomBuilderStore()
-	const navigate = useNavigate()
-
+/**
+ * Pure file-selection drop-zone.
+ * All upload / navigation logic lives in the parent (ModelLoadDialog).
+ */
+export const ModelLoader = ({
+	disabled,
+	onFileSelected,
+	selectedFile,
+}: ModelLoaderProps) => {
 	const inputRef = useRef<HTMLInputElement>(null)
-	const [modelUrl, setModelUrl] = useState<string | null>(null)
-
-	const { mutateAsync: createProject } = useMutation({
-		mutationFn: fetchCreateProject,
-	})
-
-	const { mutateAsync: uploadModel } = useMutation({
-		mutationFn: ({ projectId, file }: { projectId: number; file: File }) =>
-			fetchUploadProjectModel(projectId, file),
-	})
-
-	const handleFile = useCallback(
-		async (file: File) => {
-			try {
-				const project = await createProject({ name })
-
-				if (project.id) {
-					const updatedProject = await uploadModel({
-						projectId: project.id,
-						file,
-					})
-
-					if (updatedProject.glbUrl) {
-						setModelUrl(updatedProject.glbUrl)
-					}
-					setIsCustomRoom(false)
-					navigate(`/room-builder/edit-room/${project.id}`)
-				} else {
-					console.error('Failed to create project')
-				}
-			} catch (error) {
-				console.error('Error handling file:', error)
-			}
-		},
-		[createProject, uploadModel, name, setIsCustomRoom, navigate]
-	)
 
 	const handleDrop = useCallback(
 		(e: DragEvent) => {
 			e.preventDefault()
-			if (e.dataTransfer.files.length > 0) {
-				handleFile(e.dataTransfer.files[0])
-			}
+			const file = e.dataTransfer.files[0]
+			if (file) onFileSelected(file)
 		},
-		[handleFile]
+		[onFileSelected]
 	)
 
 	const handleChange = useCallback(
 		(e: ChangeEvent<HTMLInputElement>) => {
-			if (e.target.files && e.target.files[0]) {
-				handleFile(e.target.files[0])
-			}
+			const file = e.target.files?.[0]
+			if (file) onFileSelected(file)
 		},
-		[handleFile]
+		[onFileSelected]
 	)
 
 	return (
@@ -96,17 +54,27 @@ export const ModelLoader = ({ name }: { name: string }) => {
 				ref={inputRef}
 				onChange={handleChange}
 				style={{ display: 'none' }}
-				disabled={!name}
+				disabled={disabled}
 			/>
-			{!modelUrl && (
+			{selectedFile ? (
+				<div className='text-center text-gray-700 px-4'>
+					<p className='text-sm font-medium truncate'>{selectedFile.name}</p>
+					<p
+						className='text-xs text-gray-400 cursor-pointer mt-1'
+						onClick={() => !disabled && inputRef.current?.click()}
+					>
+						Click to change file
+					</p>
+				</div>
+			) : (
 				<div
-					onClick={() => inputRef.current?.click()}
+					onClick={() => !disabled && inputRef.current?.click()}
 					className='text-center text-gray-500 cursor-pointer'
 				>
 					<p className='text-lg'>Glb model</p>
+					<p className='text-xs text-gray-400'>Click or drag &amp; drop a .glb file</p>
 				</div>
 			)}
-			{modelUrl && <SceneSaver url={modelUrl} />}
 		</div>
 	)
 }

@@ -106,6 +106,20 @@ export const useFloorTileHandler = () => {
 			const gridX = Math.floor((point.x + TILE_SIZE / 2) / TILE_SIZE)
 			const gridZ = Math.floor((point.z + TILE_SIZE / 2) / TILE_SIZE)
 
+			// Boundary check: reject tiles whose centre lies outside the room floor.
+			// Tiles on the boundary will still be allowed (clipping planes cut the edges).
+			{
+				const { roomParams } = useRoomBuilderStore.getState()
+				const halfW = roomParams.width / 2
+				const halfD = roomParams.depth / 2
+				const cx = gridX * TILE_SIZE
+				const cz = gridZ * TILE_SIZE
+				if (cx < -halfW || cx > halfW || cz < -halfD || cz > halfD) {
+					setTimeout(() => setCamControlDisabled(false), 50)
+					return
+				}
+			}
+
 			// Alt + click = remove. Consult altPressedRef in case the synthetic event
 			// doesn't reliably include the altKey flag.
 			if (event.altKey || altPressedRef.current) {
@@ -202,6 +216,16 @@ export const useFloorTileHandler = () => {
 
 			const gridX = Math.floor((point.x + TILE_SIZE / 2) / TILE_SIZE)
 			const gridZ = Math.floor((point.z + TILE_SIZE / 2) / TILE_SIZE)
+
+			// Boundary check during drag painting.
+			{
+				const { roomParams } = useRoomBuilderStore.getState()
+				const halfW = roomParams.width / 2
+				const halfD = roomParams.depth / 2
+				const cx = gridX * TILE_SIZE
+				const cz = gridZ * TILE_SIZE
+				if (cx < -halfW || cx > halfW || cz < -halfD || cz > halfD) return
+			}
 
 			if (event.altKey || altPressedRef.current) {
 				// Alt + drag => delete tiles under cursor

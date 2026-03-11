@@ -33,6 +33,19 @@ export function DragControlsWrapper() {
 	const rafIdRef = useRef<number | null>(null)
 	const lastPositionRef = useRef<Vector3 | null>(null)
 
+	// Keep a ref that is always in sync with the latest isModelPositionValid state.
+	// drei's DragControls caches the onDragEnd callback, so using the state value
+	// directly would read a stale closure — the ref avoids that problem.
+	const isModelPositionValidRef = useRef(isModelPositionValid)
+	useEffect(() => {
+		isModelPositionValidRef.current = isModelPositionValid
+	}, [isModelPositionValid])
+
+	// Remember where the model was before the user started dragging so that an
+	// invalid drop can be reverted to the last valid position.
+	const originalPositionRef = useRef<Vector3 | null>(null)
+	const originalQuaternionRef = useRef<Quaternion | null>(null)
+
 	useEffect(() => {
 		setCabinet(cabinets.find(cab => cab.id === selectedCabinetId) || null)
 	}, [cabinets, selectedCabinetId])
@@ -50,7 +63,7 @@ export function DragControlsWrapper() {
 				quaternion: Quaternion
 			}
 		}) => {
-			if (!isModelPositionValid || !draggingModelRef?.current) return null
+			if (!isModelPositionValidRef.current || !draggingModelRef?.current) return null
 
 			const currentCabinet = cabinets.find(c => c.id === selectedCabinetId)
 
@@ -106,7 +119,7 @@ export function DragControlsWrapper() {
 	})
 
 	const syncPosition = () => {
-		if (!draggingModelRef?.current || !isModelPositionValid) return
+		if (!draggingModelRef?.current || !isModelPositionValidRef.current) return
 		const position = draggingModelRef.current.getWorldPosition(new Vector3())
 		const quaternion = draggingModelRef.current.getWorldQuaternion(
 			new Quaternion()
@@ -136,10 +149,26 @@ export function DragControlsWrapper() {
 		setShow(false)
 		setCamControlDisabled(false)
 
-		if (draggingModelRef?.current && isModelPositionValid) {
-			slapObject(draggingModelRef.current)
-			syncPosition()
+		if (draggingModelRef?.current) {
+			// Use the ref value — never a stale closure from isModelPositionValid state.
+			if (isModelPositionValidRef.current) {
+				slapObject(draggingModelRef.current)
+				syncPosition()
+			} else {
+				// Invalid drop position — revert the model to where it was before
+				// dragging started so it does not hang in mid-air.
+				if (originalPositionRef.current) {
+					draggingModelRef.current.position.copy(originalPositionRef.current)
+				}
+				if (originalQuaternionRef.current) {
+					draggingModelRef.current.quaternion.copy(originalQuaternionRef.current)
+				}
+				draggingModelRef.current.updateMatrixWorld(true)
+			}
 		}
+
+		originalPositionRef.current = null
+		originalQuaternionRef.current = null
 
 		if (rafIdRef.current !== null) {
 			cancelAnimationFrame(rafIdRef.current)
@@ -159,6 +188,13 @@ export function DragControlsWrapper() {
 				onDragStart={() => {
 					setCamControlDisabled(true)
 					setShow(true)
+					// Snapshot position/quaternion so we can revert on invalid drop.
+					if (draggingModelRef?.current) {
+						originalPositionRef.current =
+							draggingModelRef.current.position.clone()
+						originalQuaternionRef.current =
+							draggingModelRef.current.quaternion.clone()
+					}
 				}}
 				onDragEnd={handleDragEnd}
 			>

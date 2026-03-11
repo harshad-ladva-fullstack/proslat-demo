@@ -127,13 +127,16 @@ export function snapBoxToWallByPlanes(
 	const distance = pointA.distanceTo(pointB)
 	if (distance >= SNAP_DISTANCE_WALL) return
 
+	// Zero Y before computing length/direction so the XZ shift is not
+	// diminished by a vertical component — this ensures the model touches
+	// the wall precisely rather than stopping short.
 	const shift = new Vector3().subVectors(pointB, pointA)
+	shift.y = 0
 	const length = shift.length()
 	if (length > 0) {
 		const normalizedShift = shift.clone().normalize()
 		const targetDistance = Math.max(0, length - gap)
 		const gapShift = normalizedShift.multiplyScalar(targetDistance)
-		gapShift.y = 0
 		refBox.position.add(gapShift)
 	}
 }
@@ -148,7 +151,11 @@ export function snapBoxesByPlanes(
 	if (refB.name.includes('wall')) return
 	if (refB.name.includes('ignore')) return
 
-	const boxA = new Box3().setFromObject(refA)
+	// Use handle-excluded boxes for BOTH models so that protruding handles
+	// do not falsely inflate the bounding box and cause the isSideSnap check
+	// to think the boxes overlap (which would suppress the snap entirely and
+	// leave a visible gap between modules).
+	const boxA = getBoundingBoxExcludingHandles(refA)
 	const boxB = getBoundingBoxExcludingHandles(refB)
 
 	const [pointA, pointB] = getClosestPointsBetweenBoxes(boxA, boxB)
@@ -182,13 +189,16 @@ export function snapBoxesByPlanes(
 	if (snapX) {
 		const dir = baseShift.x > 0 ? 1 : -1
 		const sep = Math.abs(baseShift.x)
-		const delta = Math.abs(sep - gap)
-		if (delta > 0.0001) shift.x = dir * delta
+		// Use signed delta: positive → close the gap, negative → spread apart.
+		// Using abs() here is wrong when sep < gap (models too close) because it
+		// would push A even further toward B.
+		const delta = sep - gap
+		if (Math.abs(delta) > 0.0001) shift.x = dir * delta
 	} else if (snapZ) {
 		const dir = baseShift.z > 0 ? 1 : -1
 		const sep = Math.abs(baseShift.z)
-		const delta = Math.abs(sep - gap)
-		if (delta > 0.0001) shift.z = dir * delta
+		const delta = sep - gap
+		if (Math.abs(delta) > 0.0001) shift.z = dir * delta
 	} else {
 		return
 	}

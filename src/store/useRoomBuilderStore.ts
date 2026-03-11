@@ -339,6 +339,9 @@ export const useRoomBuilderStore = create<RoomBuilderState>((set, get) => ({
 
 	// Reset the store to a fresh state for a newly opened project. This is
 	// used when navigating between projects so UI state doesn't leak.
+	// NOTE: isCustomRoom is intentionally NOT reset here so that "Create scratch"
+	// navigation from CreateRoomPage preserves the flag through to EditRoomPage.
+	// Scene.tsx clears isCustomRoom once projectData.glbUrl is confirmed.
 	resetProjectState: () => {
 		const defaultRoomParams = {
 			width: 5,
@@ -355,7 +358,6 @@ export const useRoomBuilderStore = create<RoomBuilderState>((set, get) => ({
 			selectedCabinetId: null,
 			selectedModelRef: null,
 			camControlDisabled: false,
-			isCustomRoom: false,
 			roomParams: defaultRoomParams,
 			roomGroup: generateRoom({
 				width: 10,

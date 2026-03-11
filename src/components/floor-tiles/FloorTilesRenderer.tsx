@@ -12,6 +12,7 @@ import {
 	LineBasicMaterial,
 	LineSegments,
 	DoubleSide,
+	Plane,
 } from 'three'
 import { useTexture } from '@react-three/drei'
 import { useRoomBuilderStore } from '@/store/useRoomBuilderStore'
@@ -37,7 +38,26 @@ export const FloorTile = ({ x, z, type }: FloorTileProps) => {
 	texture.magFilter = LinearFilter
 	texture.anisotropy = gl.capabilities.getMaxAnisotropy()
 
-	// No clipping: always render the tile. Trimming/clip logic removed.
+	// Read current room params to build clipping planes that restrict tile
+	// rendering to the interior of the room floor area.
+	const { roomParams } = useRoomBuilderStore()
+
+	// Four axis-aligned clipping planes matching the room floor boundary.
+	// Three.js keeps fragments where (normal · point + constant) >= 0.
+	//   Left   (x >= -halfW) : normal = (+1,0,0), constant = +halfW
+	//   Right  (x <= +halfW) : normal = (-1,0,0), constant = +halfW
+	//   Front  (z >= -halfD) : normal = (0,0,+1), constant = +halfD
+	//   Back   (z <= +halfD) : normal = (0,0,-1), constant = +halfD
+	const clippingPlanes = useMemo(() => {
+		const halfW = roomParams.width / 2
+		const halfD = roomParams.depth / 2
+		return [
+			new Plane(new Vector3(1, 0, 0), halfW),
+			new Plane(new Vector3(-1, 0, 0), halfW),
+			new Plane(new Vector3(0, 0, 1), halfD),
+			new Plane(new Vector3(0, 0, -1), halfD),
+		]
+	}, [roomParams.width, roomParams.depth])
 
 	return (
 		<group position={[x * TILE_SIZE, 0.01, z * TILE_SIZE]} name={`ignore`}>
@@ -54,6 +74,8 @@ export const FloorTile = ({ x, z, type }: FloorTileProps) => {
 					transparent
 					alphaTest={0.1}
 					side={DoubleSide}
+					clippingPlanes={clippingPlanes}
+					clipShadows
 				/>
 			</mesh>
 

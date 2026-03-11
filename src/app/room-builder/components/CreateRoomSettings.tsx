@@ -2,25 +2,22 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useRoomBuilderStore } from '@/store/useRoomBuilderStore'
-import { useNavigate } from 'react-router-dom'
-import { useMutation } from '@tanstack/react-query'
-import { fetchCreateProject, fetchUploadProjectModel } from '@/api/project'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { fetchUploadProjectModel } from '@/api/project'
 import { GLTFExporter } from 'three/examples/jsm/Addons.js'
 import { Object3D } from 'three'
 import type { ChangeEvent } from 'react'
 import { useState } from 'react'
+import { useParams } from 'react-router-dom'
+import { QUERY_KEYS } from '@/constants/query-keys'
 
 export const CreateRoomSettings = () => {
-	const navigate = useNavigate()
-	const [projectName, setProjectName] = useState('Custom Room')
+	const { id } = useParams<{ id: string }>()
+	const queryClient = useQueryClient()
 	const [isSaving, setIsSaving] = useState(false)
 
-	const { roomParams, setRoomParams, regenerateRoom, scene } =
+	const { roomParams, setRoomParams, regenerateRoom, scene, setIsCustomRoom } =
 		useRoomBuilderStore()
-
-	const { mutateAsync: createProject } = useMutation({
-		mutationFn: fetchCreateProject,
-	})
 
 	const { mutateAsync: uploadModel } = useMutation({
 		mutationFn: ({ projectId, file }: { projectId: number; file: File }) =>
@@ -42,7 +39,6 @@ export const CreateRoomSettings = () => {
 		sceneClone.traverse(child => {
 			if (child.name === 'ignore') {
 				child.rotation.set(0, 0, 0)
-
 				child.rotateX(-Math.PI / 2)
 			}
 		})
@@ -56,7 +52,6 @@ export const CreateRoomSettings = () => {
 			}
 
 			const tempScene = scene.clone()
-			console.log(tempScene)
 			fixBillboardOrientations(tempScene)
 
 			const exporter = new GLTFExporter()
@@ -81,6 +76,7 @@ export const CreateRoomSettings = () => {
 	}
 
 	const handleSave = async () => {
+		// Remove cutout meshes from the scene before exporting
 		scene?.traverse(child => {
 			if (child.userData.isCutout) {
 				if (child.parent) {
@@ -103,30 +99,32 @@ export const CreateRoomSettings = () => {
 				}
 			}
 		})
+
+		if (!id) {
+			console.error('No project id available')
+			return
+		}
+
 		try {
 			setIsSaving(true)
 
-			const project = await createProject({ name: projectName })
+			const glbBlob = await exportSceneAsBlob()
 
-			if (project.id) {
-				const glbBlob = await exportSceneAsBlob()
+			if (glbBlob) {
+				const file = new File([glbBlob], 'custom-room.glb', {
+					type: 'model/gltf-binary',
+				})
 
-				if (glbBlob) {
-					const file = new File([glbBlob], 'custom-room.glb', {
-						type: 'model/gltf-binary',
-					})
+				await uploadModel({ projectId: Number(id), file })
 
-					await uploadModel({
-						projectId: project.id,
-						file,
-					})
-
-					navigate(`/room-builder/edit-room/${project.id}`)
-				} else {
-					console.error('Failed to export scene as GLB')
-				}
+				// Refresh project data so Scene.tsx loads the new GLB from the server.
+				// The glbUrl effect in Scene.tsx will then set isCustomRoom=false.
+				await queryClient.invalidateQueries({
+					queryKey: [id, QUERY_KEYS.project],
+				})
+				setIsCustomRoom(false)
 			} else {
-				console.error('Failed to create project')
+				console.error('Failed to export scene as GLB')
 			}
 		} catch (error) {
 			console.error('Error saving project:', error)
@@ -138,15 +136,6 @@ export const CreateRoomSettings = () => {
 	return (
 		<>
 			<div className='mb-4 flex flex-col gap-2'>
-				<Label htmlFor='projectName'>Project Name</Label>
-				<Input
-					id='projectName'
-					type='text'
-					value={projectName}
-					onChange={e => setProjectName(e.target.value)}
-				/>
-			</div>
-			<div className='mb-4 flex flex-col gap-2'>
 				<Label htmlFor='Width'>Width</Label>
 				<Input
 					id='Width'
@@ -156,7 +145,7 @@ export const CreateRoomSettings = () => {
 				/>
 			</div>
 			<div className='mb-4 flex flex-col gap-2'>
-				<Label htmlFor='Depth'>Height</Label>
+				<Label htmlFor='Height'>Height</Label>
 				<Input
 					id='Height'
 					type='number'
@@ -205,9 +194,9 @@ export const CreateRoomSettings = () => {
 				variant={'outline'}
 				className='w-full'
 				onClick={handleSave}
-				disabled={isSaving || !projectName.trim()}
+				disabled={isSaving}
 			>
-				{isSaving ? 'Saving...' : 'Save'}
+				{isSaving ? 'Saving...' : 'Save & Use Room'}
 			</Button>
 		</>
 	)

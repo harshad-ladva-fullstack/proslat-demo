@@ -59,6 +59,7 @@ export const Scene = ({ id }: SceneProps) => {
 		addRoomModel,
 		clearRoomModel,
 		isCustomRoom,
+		setIsCustomRoom,
 		roomModel,
 		cabinets,
 		camControlDisabled,
@@ -227,6 +228,14 @@ export const Scene = ({ id }: SceneProps) => {
 			setCabinets(projectData?.models || [])
 		}
 	}, [projectData, setCabinets])
+
+	// When the project has a server-side GLB, switch to server-model mode.
+	// This clears the isCustomRoom flag that was set during "Create scratch" flow.
+	useEffect(() => {
+		if (projectData?.glbUrl) {
+			setIsCustomRoom(false)
+		}
+	}, [projectData?.glbUrl, setIsCustomRoom])
 
 	// route-driven: check if we're on the ramps editor route
 	const isEditRamps = !!useMatch('/room-builder/edit-room/:id/tiles/ramps')
