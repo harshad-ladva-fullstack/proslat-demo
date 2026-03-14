@@ -59,14 +59,18 @@ export const LeftBarTabs = ({
 		}
 	}, [categories, modelCategories, setModelCategories, showOnlySurfaces])
 
+	// Sentinel used to group models whose subcategory is null or undefined.
+	// Without this, those models render as an invisible blank tab button.
+	const FALLBACK_SUBCATEGORY = '__general__'
+
 	const getSubcategories = (category: string) => {
 		return [
 			...new Set(
 				data
 					?.filter(model => model.category === category)
-					.map(model => model.subcategory)
+					.map(model => model.subcategory || FALLBACK_SUBCATEGORY)
 			),
-		].filter(sub => sub !== undefined) as string[]
+		].filter((sub): sub is string => typeof sub === 'string')
 	}
 
 	const [activeSubcategory, setActiveSubcategory] = useState<string>(
@@ -80,9 +84,9 @@ export const LeftBarTabs = ({
 					...new Set(
 						data
 							?.filter(model => model.category === effectiveCategory)
-							.map(model => model.subcategory)
+							.map(model => model.subcategory || FALLBACK_SUBCATEGORY)
 					),
-				].filter(sub => sub !== undefined) as string[]
+				].filter((sub): sub is string => typeof sub === 'string')
 			)[0] || ''
 
 		setActiveSubcategory(first)
@@ -97,8 +101,10 @@ export const LeftBarTabs = ({
 		>
 			<TabsList className='flex-wrap mb-2'>
 				{getSubcategories(effectiveCategory).map((subcategory, subIndex) => (
-					<TabsTrigger key={subIndex} value={subcategory || ''}>
-						{camelCaseToNormal(subcategory || '')}
+					<TabsTrigger key={subIndex} value={subcategory}>
+						{subcategory === FALLBACK_SUBCATEGORY
+							? 'General'
+							: camelCaseToNormal(subcategory)}
 					</TabsTrigger>
 				))}
 			</TabsList>
@@ -116,13 +122,13 @@ export const LeftBarTabs = ({
 			)}
 
 			{getSubcategories(effectiveCategory).map((subcategory, subIndex) => (
-				<TabsContent key={subIndex} value={subcategory || ''}>
+				<TabsContent key={subIndex} value={subcategory}>
 					<div className='grid grid-cols-3  overflow-auto gap-2 pb-[68px]'>
 						{data
 							?.filter(
 								model =>
 									model.category === effectiveCategory &&
-									model.subcategory === subcategory
+									(model.subcategory || FALLBACK_SUBCATEGORY) === subcategory
 							)
 							.map((model, modelIndex) => (
 								<button
