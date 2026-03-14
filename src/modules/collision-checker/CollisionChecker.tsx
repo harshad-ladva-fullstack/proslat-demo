@@ -24,8 +24,8 @@ import {
 	LineSegments,
 	LineBasicMaterial,
 } from 'three'
-import { SNAP_DISTANCE_MODEL, SNAP_DISTANCE_WALL } from '@/constants/constants'
-import { getWallBoundingBoxExcludingCutouts } from '@/modules/collision-checker/boxUtils'
+import { SNAP_DISTANCE_MODEL, SNAP_DISTANCE_WALL, MODEL_GAP } from '@/constants/constants'
+import { getBoundingBoxExcludingHandles, getWallBoundingBoxExcludingCutouts } from '@/modules/collision-checker/boxUtils'
 import {
 	COLLISION_RULES,
 	MODEL_TYPES,
@@ -578,6 +578,9 @@ export const CollisionChecker = () => {
 	}
 
 	useFrame(() => {
+		const floorCabinetBoxes: Box3[] = []
+		const wallMountObjs: Object3D[] = []
+
 		scene.traverse(obj => {
 			if (obj.name.includes('floor')) {
 				if (!floorMesh && obj instanceof Mesh) {
@@ -594,8 +597,44 @@ export const CollisionChecker = () => {
 				)
 
 				obj.updateMatrixWorld(true)
+
+				// Collect floor cabinets and wall-mounts to detect vertical overlap
+				// (e.g. a tall fridge whose top extends above the wall-mount bottom)
+				if (obj.userData.type === MODEL_TYPES.default) {
+					floorCabinetBoxes.push(getBoundingBoxExcludingHandles(obj))
+				} else if (
+					obj.userData.type === MODEL_TYPES.middleWallCabinet ||
+					obj.userData.type === MODEL_TYPES.topWallCabinet
+				) {
+					wallMountObjs.push(obj)
+				}
 			}
 		})
+
+		// For each wall-mount, push its Y up if a tall floor cabinet (e.g. fridge)
+		// occupies the same XZ footprint and its top exceeds the wall-mount's bottom.
+		if (floorCabinetBoxes.length > 0 && wallMountObjs.length > 0) {
+			for (const wallMount of wallMountObjs) {
+				const wmBox = getBoundingBoxExcludingHandles(wallMount)
+				let maxFloorTop = 0
+
+				for (const fcBox of floorCabinetBoxes) {
+					const xOverlap =
+						fcBox.max.x > wmBox.min.x && fcBox.min.x < wmBox.max.x
+					const zOverlap =
+						fcBox.max.z > wmBox.min.z && fcBox.min.z < wmBox.max.z
+					if (xOverlap && zOverlap && fcBox.max.y > maxFloorTop) {
+						maxFloorTop = fcBox.max.y
+					}
+				}
+
+				if (maxFloorTop > wmBox.min.y) {
+					const wmHalfHeight = (wmBox.max.y - wmBox.min.y) / 2
+					wallMount.position.y = maxFloorTop + MODEL_GAP + wmHalfHeight
+					wallMount.updateMatrixWorld(true)
+				}
+			}
+		}
 	})
 
 	useFrame(() => {
@@ -669,7 +708,7 @@ export const CollisionChecker = () => {
 		let hasSnapObject = false
 
 		draggingModelRef.current.updateMatrixWorld(true)
-		const draggedBox = new Box3().setFromObject(draggingModelRef.current)
+		const draggedBox = getBoundingBoxExcludingHandles(draggingModelRef.current)
 
 		let nearestModelObj: Object3D | null = null
 		let nearestModelDist = Infinity
@@ -749,28 +788,119 @@ export const CollisionChecker = () => {
 			// Defensive: if userData isn't set or malformed, don't throw — leave isValid unchanged
 		}
 
+		// ── Pass 1: walls ────────────────────────────────────────────────────────
+		// Detect wall collisions and establish tempNearestWall BEFORE evaluating
+		// model snap candidates so that attachedWallMatches is always correct.
 		scene.traverse(obj => {
 			if (obj.userData?.isDebugVisualization) return
+			if (!checkIfElementISWall(obj)) return
+			if (obj.name.includes('floor')) return
+			if (obj.name.includes('raycast-')) return
+			if (obj.name.includes('debug-')) return
+			if (obj.name === '') return
 
-			const draggingType = draggingModelRef.current?.userData?.type
+			const otherBox = getWallBoundingBoxExcludingCutouts(obj)
+
+			if (debug) {
+				const otherBoxViz = createBoundingBoxVisualization(
+					otherBox,
+					new Color(0xff0000),
+					`debug-${obj.name}-box`
+				)
+				scene.add(otherBoxViz)
+				debugBoxesRef.current.push(otherBoxViz)
+			}
+
+			const [pointA, pointB] = getClosestPointsBetweenBoxes(draggedBox, otherBox)
+			if (!pointA || !pointB) return
+			const distance = pointA.distanceTo(pointB)
+
+			if (debug) {
+				console.log(`Wall ${obj.name} distance:`, distance, 'checkIfSnap:', checkIfSnap(distance))
+			}
+
+			if (draggedBox.intersectsBox(shrinkBox(otherBox, 0.01))) {
+				isValid = false
+				if (draggingModelRef.current.userData.type === MODEL_TYPES.surfaceWall) {
+					wallIntersection = true
+					wallIntersectionObj = obj
+					if (debug)
+						console.log('SurfaceWall intersecting wall - position invalid:', obj.name)
+				}
+			} else {
+				const canSnap = checkIfSnap(distance)
+				if (canSnap) {
+					isNear = true
+					hasSnapObject = true
+					console.log(`Snap detected with ${obj.name}, distance: ${distance}`)
+
+					if (debug) {
+						const snapBoxViz = createBoundingBoxVisualization(
+							otherBox,
+							new Color(0xffff00),
+							`debug-snap-${obj.name}-box`
+						)
+						scene.add(snapBoxViz)
+						debugBoxesRef.current.push(snapBoxViz)
+					}
+
+					console.log(`Processing wall snap with ${obj.name}`)
+					// Always track the nearest other wall (exclude the manually selected one)
+					if (selectedWall && obj !== selectedWall) {
+						if (distance < nearestOtherWallDist) {
+							nearestOtherWallDist = distance
+							nearestOtherWall = obj
+						}
+					}
+
+					if (!selectedWall) {
+						if (distance < tempNearestWallDist) {
+							secondNearestWall = tempNearestWall
+							secondNearestWallDist = tempNearestWallDist
+							tempNearestWallDist = distance
+							tempNearestWall = obj
+						} else if (distance < secondNearestWallDist) {
+							secondNearestWallDist = distance
+							secondNearestWall = obj
+						}
+					} else {
+						// If manual wall selected, only allow snapping to that wall within SNAP_DISTANCE_WALL
+						if (obj === selectedWall && distance <= SNAP_DISTANCE_WALL) {
+							tempNearestWall = obj
+							tempNearestWallDist = distance
+						}
+					}
+				}
+			}
+		})
+
+		// ── Pass 2: models ───────────────────────────────────────────────────────
+		// Wall context is now established; evaluate model snap with correct wall info.
+		const wallContextNameForModels = (selectedWall || tempNearestWall)?.name as
+			| string
+			| undefined
+
+		const draggingType = draggingModelRef.current?.userData?.type as
+			| string
+			| undefined
+
+		scene.traverse(obj => {
+			if (obj.userData?.isDebugVisualization) return
+			if (!checkIfElementISModel(obj)) return // walls already handled above
+
 			const targetType = obj.userData?.type
-
 			if (
 				draggingType &&
 				targetType &&
 				shouldIgnoreCollision(draggingType, targetType)
-			) {
+			)
 				return
-			}
 			if (
 				sourceVisualizeRef &&
 				(obj === sourceVisualizeRef || isDescendantOf(obj, sourceVisualizeRef))
 			)
 				return
-			if (
-				draggingModelRef?.current &&
-				isDescendantOf(obj, draggingModelRef.current)
-			)
+			if (draggingModelRef?.current && isDescendantOf(obj, draggingModelRef.current))
 				return
 			if (obj.name === 'ignore') return
 			if (obj === draggingModelRef.current) return
@@ -778,77 +908,33 @@ export const CollisionChecker = () => {
 			if (obj.name.includes('floor')) return
 			if (obj.name.includes('raycast-')) return
 			if (obj.name.includes('debug-')) return
-
 			if (obj.name === '') return
 
-			let otherBox: Box3
-			if (checkIfElementISWall(obj)) {
-				otherBox = getWallBoundingBoxExcludingCutouts(obj)
-			} else {
-				// For models, exclude handle meshes when computing the other box
-				otherBox = new Box3().setFromObject(obj)
-			}
+			// Use handle-excluded boxes for accurate body-to-body distances
+			const otherBox = getBoundingBoxExcludingHandles(obj)
 
-			if (debug && (checkIfElementISWall(obj) || checkIfElementISModel(obj))) {
-				const boxColor = checkIfElementISWall(obj)
-					? new Color(0xff0000)
-					: new Color(0x00ff00)
+			if (debug) {
 				const otherBoxViz = createBoundingBoxVisualization(
 					otherBox,
-					boxColor,
+					new Color(0x00ff00),
 					`debug-${obj.name}-box`
 				)
 				scene.add(otherBoxViz)
 				debugBoxesRef.current.push(otherBoxViz)
 			}
 
-			const [pointA, pointB] = getClosestPointsBetweenBoxes(
-				draggedBox,
-				otherBox
-			)
+			const [pointA, pointB] = getClosestPointsBetweenBoxes(draggedBox, otherBox)
+			if (!pointA || !pointB) return
+			const distance = pointA.distanceTo(pointB)
 
-			if (pointA && pointB) {
-				const distance = pointA.distanceTo(pointB)
-				if (checkIfElementISWall(obj)) {
-					console.log(
-						`Wall ${obj.name} distance:`,
-						distance,
-						'checkIfSnap:',
-						checkIfSnap(distance)
-					)
-				} else if (checkIfElementISModel(obj)) {
-					const isValidDistance = distance <= SNAP_DISTANCE_MODEL
-					console.log(
-						`Model ${obj.name} distance:`,
-						distance,
-						'isValid:',
-						isValidDistance
-					)
-				}
+			if (debug) {
+				console.log(`Model ${obj.name} distance:`, distance, 'isValid:', distance <= SNAP_DISTANCE_MODEL)
 			}
 
-			if (draggedBox.intersectsBox(shrinkBox(otherBox, 0.05))) {
+			if (draggedBox.intersectsBox(shrinkBox(otherBox, 0.01))) {
 				isValid = false
-
-				if (
-					draggingModelRef.current.userData.type === MODEL_TYPES.surfaceWall
-				) {
-					let hitWallParent: Object3D | null = obj
-					while (hitWallParent && !checkIfElementISWall(hitWallParent)) {
-						hitWallParent = hitWallParent.parent!
-					}
-					if (hitWallParent) {
-						wallIntersection = true
-						wallIntersectionObj = hitWallParent
-						if (debug)
-							console.log(
-								'SurfaceWall intersecting wall - position invalid:',
-								obj.name,
-								'wall parent:',
-								hitWallParent.name
-							)
-						return
-					}
+				if (draggingType === MODEL_TYPES.surfaceWall) {
+					// surface-wall overlapping a 'surface' countertop is allowed
 					let hitModelParent: Object3D | null = obj
 					while (hitModelParent && !hitModelParent.userData?.type) {
 						hitModelParent = hitModelParent.parent!
@@ -858,137 +944,69 @@ export const CollisionChecker = () => {
 						hitModelParent.userData.type === MODEL_TYPES.surface
 					) {
 						isValid = true
-						return
 					}
 				}
-			} else if (
-				pointA &&
-				pointB &&
-				(obj.name === 'ghost-model' ||
-					checkIfElementISWall(obj) ||
-					checkIfElementISModel(obj))
-			) {
-				const distance = pointA.distanceTo(pointB)
+			} else if (distance <= SNAP_DISTANCE_MODEL) {
+				isNear = true
+				hasSnapObject = true
+				console.log(`Snap detected with ${obj.name}, distance: ${distance}`)
 
-				let canSnap = false
-				if (checkIfElementISWall(obj)) {
-					canSnap = checkIfSnap(distance)
-				} else if (checkIfElementISModel(obj)) {
-					canSnap = distance <= SNAP_DISTANCE_MODEL
-				} else {
-					canSnap = checkIfSnap(distance)
+				if (debug) {
+					const snapBoxViz = createBoundingBoxVisualization(
+						otherBox,
+						new Color(0xffff00),
+						`debug-snap-${obj.name}-box`
+					)
+					scene.add(snapBoxViz)
+					debugBoxesRef.current.push(snapBoxViz)
 				}
 
-				if (canSnap) {
-					isNear = true
-					hasSnapObject = true
-					console.log(`Snap detected with ${obj.name}, distance: ${distance}`)
+				const canSnapToThisTarget = canSnapToTarget(
+					draggingType || '',
+					obj.userData?.type || ''
+				)
 
-					if (debug) {
-						const snapBoxColor = new Color(0xffff00)
-						const snapBoxViz = createBoundingBoxVisualization(
-							otherBox,
-							snapBoxColor,
-							`debug-snap-${obj.name}-box`
-						)
-						scene.add(snapBoxViz)
-						debugBoxesRef.current.push(snapBoxViz)
-					}
+				const modelAttachedWallName = obj.userData?.attachedWallName as
+					| string
+					| undefined
+				const modelIsInCorner = !!obj.userData?.isInCorner
+				const draggingAttachedWallName = draggingModelRef.current?.userData
+					?.attachedWallName as string | undefined
 
-					if (checkIfElementISWall(obj)) {
-						console.log(`Processing wall snap with ${obj.name}`)
-						// Always track the nearest other wall (exclude the manually selected one)
-						if (selectedWall && obj !== selectedWall) {
-							if (distance < nearestOtherWallDist) {
-								nearestOtherWallDist = distance
-								nearestOtherWall = obj
-							}
-						}
+				const attachedWallMatches = (() => {
+					if (!modelAttachedWallName) return true
+					if (modelIsInCorner) return true
+					// wallContextNameForModels is now reliably set from pass 1
+					if (
+						wallContextNameForModels &&
+						modelAttachedWallName === wallContextNameForModels
+					)
+						return true
+					if (
+						draggingAttachedWallName &&
+						modelAttachedWallName === draggingAttachedWallName
+					)
+						return true
+					return false
+				})()
 
-						// If there is no manual selection, maintain two nearest walls as before
-						if (!selectedWall) {
-							if (distance < tempNearestWallDist) {
-								secondNearestWall = tempNearestWall
-								secondNearestWallDist = tempNearestWallDist
-								tempNearestWallDist = distance
-								tempNearestWall = obj
-							} else if (distance < secondNearestWallDist) {
-								secondNearestWallDist = distance
-								secondNearestWall = obj
-							}
-						} else {
-							// If manual wall selected, only allow snapping to that wall within SNAP_DISTANCE_WALL
-							if (obj === selectedWall) {
-								if (distance <= SNAP_DISTANCE_WALL) {
-									tempNearestWall = obj
-									tempNearestWallDist = distance
-								}
-							}
-						}
-					} else if (checkIfElementISModel(obj)) {
-						hasSnapObject = true
+				if (
+					canSnapToThisTarget &&
+					distance < nearestModelDist &&
+					attachedWallMatches
+				) {
+					nearestModelDist = distance
+					nearestModelObj = obj
+				}
 
-						const canSnapToThisTarget = canSnapToTarget(
-							draggingType || '',
-							obj.userData?.type || ''
-						)
-
-						// Only consider this model if it is allowed by snap rules.
-						// New behavior: models are acceptable when any of the following is true:
-						// - model has no attachedWallName (free-floating)
-						// - model is attached to the same wall as the dragging model (by name)
-						// - model is attached to the current wall context (selected or tempNearest)
-						// - model is marked as a corner model (isInCorner)
-						const wallContext = selectedWall || tempNearestWall
-						const wallContextName = wallContext?.name as string | undefined
-
-						const modelAttachedWallName = obj.userData?.attachedWallName as
-							| string
-							| undefined
-						const modelIsInCorner = !!obj.userData?.isInCorner
-
-						const draggingAttachedWallName = draggingModelRef.current?.userData
-							?.attachedWallName as string | undefined
-
-						const attachedWallMatches = (() => {
-							// if model has no attachedWallName, allow
-							if (!modelAttachedWallName) return true
-							// if model explicitly marked as corner, allow regardless of wall
-							if (modelIsInCorner) return true
-							// if wall context (selected or nearest) matches model's attached wall name
-							if (wallContextName && modelAttachedWallName === wallContextName)
-								return true
-							// if dragging model has attachedWallName and matches model's attached wall name
-							if (
-								draggingAttachedWallName &&
-								modelAttachedWallName === draggingAttachedWallName
-							)
-								return true
-
-							return false
-						})()
-
-						if (
-							canSnapToThisTarget &&
-							distance <= SNAP_DISTANCE_MODEL &&
-							distance < nearestModelDist &&
-							attachedWallMatches
-						) {
-							nearestModelDist = distance
-							nearestModelObj = obj
-						}
-
-						if (obj.position.y < (draggingModelRef.current?.position.y || 0)) {
-							if (
-								canSnapToThisTarget &&
-								distance <= SNAP_DISTANCE_MODEL &&
-								distance < nearestBottomModelDist &&
-								attachedWallMatches
-							) {
-								nearestBottomModelDist = distance
-								nearestBottomModelObj = obj
-							}
-						}
+				if (obj.position.y < (draggingModelRef.current?.position.y || 0)) {
+					if (
+						canSnapToThisTarget &&
+						distance < nearestBottomModelDist &&
+						attachedWallMatches
+					) {
+						nearestBottomModelDist = distance
+						nearestBottomModelObj = obj
 					}
 				}
 			}
@@ -1481,6 +1499,31 @@ export const CollisionChecker = () => {
 					{ tempNearestWall, tempNearestWallDist }
 				)
 			}
+		}
+
+		// Cabinet types that require wall attachment must always have a wall nearby.
+		// Without this check, a cabinet placed near another cabinet (but far from
+		// any wall) would pass validation because nearestModelObj is non-null, then
+		// slapObject would side-snap it to the other cabinet floating in the room.
+		const wallRequiredTypes = [
+			MODEL_TYPES.default,
+			MODEL_TYPES.middleWallCabinet,
+			MODEL_TYPES.topWallCabinet,
+		]
+		const draggingTypeForWallCheck =
+			draggingModelRef.current?.userData?.type as string | undefined
+		if (
+			isValid &&
+			draggingTypeForWallCheck &&
+			wallRequiredTypes.includes(draggingTypeForWallCheck) &&
+			!tempNearestWall &&
+			!isInCorner
+		) {
+			isValid = false
+			console.log(
+				'Position invalid: cabinet requires a nearby wall',
+				draggingTypeForWallCheck
+			)
 		}
 
 		if (debug) {

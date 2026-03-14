@@ -33,6 +33,16 @@ export const CreateRoomSettings = () => {
 
 			setRoomParams({ [field]: parsedValue as never })
 			regenerateRoom()
+
+			// Persist dimensions to localStorage so they survive a page reload or
+			// back-navigation before the user explicitly clicks "Save & Use Room".
+			if (id) {
+				const updated = { ...roomParams, [field]: parsedValue }
+				localStorage.setItem(
+					`proslat_roomParams_${id}`,
+					JSON.stringify(updated)
+				)
+			}
 		}
 
 	const fixBillboardOrientations = (sceneClone: Object3D) => {
@@ -116,6 +126,13 @@ export const CreateRoomSettings = () => {
 				})
 
 				await uploadModel({ projectId: Number(id), file })
+
+				// Persist the current room params so they are restored when the
+				// project is reopened, even before the GLB bounding box is parsed.
+				localStorage.setItem(
+					`proslat_roomParams_${id}`,
+					JSON.stringify(roomParams)
+				)
 
 				// Refresh project data so Scene.tsx loads the new GLB from the server.
 				// The glbUrl effect in Scene.tsx will then set isCustomRoom=false.

@@ -164,6 +164,40 @@ export function snapBoxesByPlanes(
 	const distance = pointA.distanceTo(pointB)
 	if (distance >= SNAP_DISTANCE_MODEL) return
 
+	// When boxes are overlapping, getClosestPointsBetweenBoxes returns the midpoint
+	// of each overlapping axis — a point inside both boxes that is never on any face.
+	// getPlanesForPointOnBox therefore finds no planes, isSideSnap is false, and the
+	// function bails without fixing the overlap.  Handle this explicitly: compute the
+	// XZ penetration depth, pick the axis with the smaller overlap, and push refA out.
+	if (distance < 0.001) {
+		const overlapX =
+			Math.min(boxA.max.x, boxB.max.x) - Math.max(boxA.min.x, boxB.min.x)
+		const overlapZ =
+			Math.min(boxA.max.z, boxB.max.z) - Math.max(boxA.min.z, boxB.min.z)
+
+		if (overlapX > 0 && overlapZ > 0) {
+			const centerA = new Vector3()
+			const centerB = new Vector3()
+			boxA.getCenter(centerA)
+			boxB.getCenter(centerB)
+
+			// Objects on different height layers (e.g. wall-mount above floor cabinet)
+			// share an overlapping AABB but are not physically overlapping. Skip the
+			// push so the wall-mount is not incorrectly displaced in Z (away from wall).
+			const yDiff = Math.abs(centerA.y - centerB.y)
+			if (yDiff > 0.5) return
+
+			if (overlapX <= overlapZ) {
+				const dir = centerA.x >= centerB.x ? 1 : -1
+				refA.position.x += dir * (overlapX + gap)
+			} else {
+				const dir = centerA.z >= centerB.z ? 1 : -1
+				refA.position.z += dir * (overlapZ + gap)
+			}
+		}
+		return
+	}
+
 	const planesA = getPlanesForPointOnBox(pointA, boxA)
 	const planesB = getPlanesForPointOnBox(pointB, boxB)
 
@@ -489,16 +523,35 @@ export const slapObject = (draggingModel: Object3D<Object3DEventMap>) => {
 
 	if (isCornerOnly) {
 		if (draggingModel.userData.isInCorner) {
-			snapBoxToCorner(
-				draggingModel,
-				draggingModel.userData.cornerWalls[0],
-				draggingModel.userData.cornerWalls[1],
-				MODEL_GAP
-			)
+			const wallA = draggingModel.userData.cornerWalls[0]
+			const wallB = draggingModel.userData.cornerWalls[1]
+
+			// Determine corner chirality so the asymmetric L-shaped cabinet always
+			// has its open slot pointing into the room corner regardless of which
+			// wall the user was nearest when they dropped it.
+			//
+			// Identify the X-axis wall (left/right) and Z-axis wall (front/back)
+			// from their bounding-box centres — order-independent.
+			const centA = new Box3().setFromObject(wallA).getCenter(new Vector3())
+			const centB = new Box3().setFromObject(wallB).getCenter(new Vector3())
+			const isAXWall = Math.abs(centA.x) > Math.abs(centA.z)
+			const xCent   = isAXWall ? centA : centB   // centre of left/right wall
+			const zCent   = isAXWall ? centB : centA   // centre of front/back wall
+
+			// Inward normal signs:  left wall → xNX=+1, right wall → xNX=-1
+			//                       front wall → zNZ=+1, back wall → zNZ=-1
+			// chirality = -(xNX * zNZ): > 0 means the corner is "opposite-handed"
+			// to the model's default orientation and needs a +90° Y correction.
+			const xNX = -Math.sign(xCent.x)
+			const zNZ = -Math.sign(zCent.z)
+			if (-xNX * zNZ > 0) {
+				draggingModel.rotateY(Math.PI / 2)
+			}
+
+			snapBoxToCorner(draggingModel, wallA, wallB, MODEL_GAP)
 
 			draggingModel.userData.attachedWall = null
 			draggingModel.userData.attachedWallName = null
-
 			draggingModel.userData.savedQuaternion = null
 		} else {
 			draggingModel.userData.attachedWall = null

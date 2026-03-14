@@ -76,8 +76,15 @@ export const Scene = ({ id }: SceneProps) => {
 		toggleFloorTilesEnabled,
 		floorMesh,
 		resetProjectState,
-		// floorTiles (intentionally not read here)
+		floorTiles,
+		setRoomParamsOnly,
 	} = useRoomBuilderStore()
+
+	// Keep a ref to current floorTiles so we can access the latest in-memory
+	// tiles inside effects without adding floorTiles as a dep (which would
+	// cause infinite loops in the isCreateTiles grid-fill effect).
+	const floorTilesRef = useRef(floorTiles)
+	floorTilesRef.current = floorTiles
 
 	const containerWidth = useMemo(() => {
 		if (selectSceneSetting !== 'default' || selectedCabinetId !== null) {
@@ -204,6 +211,39 @@ export const Scene = ({ id }: SceneProps) => {
 					const modelBlob = await response.blob()
 					const renderedGroup = await loadModelFromBlob(modelBlob)
 					addRoomModel(renderedGroup)
+
+					// Restore room dimension params so CreateRoomSettings inputs
+					// reflect the actual room. First try localStorage (most precise),
+					// then fall back to computing from the loaded GLB bounding box.
+					try {
+						const saved = id
+							? localStorage.getItem(`proslat_roomParams_${id}`)
+							: null
+						if (saved) {
+							const parsed = JSON.parse(saved)
+							setRoomParamsOnly(parsed)
+						} else {
+							let floorMeshObj: Object3D | null = null
+							renderedGroup.traverse((child: Object3D) => {
+								if (
+									child.name?.includes('floor') &&
+									child.type === 'Mesh'
+								) {
+									floorMeshObj = child
+								}
+							})
+							const target = floorMeshObj ?? renderedGroup
+							const dimBox = new Box3().setFromObject(target as Object3D)
+							const dimSize = new Vector3()
+							dimBox.getSize(dimSize)
+							setRoomParamsOnly({
+								width: Math.round(Math.abs(dimSize.x) * 100) / 100,
+								depth: Math.round(Math.abs(dimSize.z) * 100) / 100,
+							})
+						}
+					} catch {
+						// Dimension restoration is non-critical — ignore errors
+					}
 				} catch (error) {
 					console.error('Failed to load model from server:', error)
 				}
@@ -221,7 +261,7 @@ export const Scene = ({ id }: SceneProps) => {
 			}
 		}
 		loadModelFromServer()
-	}, [addRoomModel, clearRoomModel, projectData?.glbUrl, projectData, id])
+	}, [addRoomModel, clearRoomModel, projectData?.glbUrl, projectData, id, setRoomParamsOnly])
 
 	useEffect(() => {
 		if (projectData) {
@@ -312,8 +352,16 @@ export const Scene = ({ id }: SceneProps) => {
 				// Merge with existing tiles (from query) so we don't lose
 				// any previously saved tiles. Existing tiles take
 				// precedence; only missing cells are added.
+				// Use the current in-memory tiles as the primary source of "existing"
+				// tiles when rebuilding the grid. This preserves any changes the user
+				// painted that have not yet propagated back through the server query.
+				// Fall back to the server query data only when there are no in-memory tiles.
 				const existing: ITile[] =
-					tilesQuery.data && tilesQuery.data.length > 0 ? tilesQuery.data : []
+					floorTilesRef.current.length > 0
+						? floorTilesRef.current
+						: tilesQuery.data && tilesQuery.data.length > 0
+						? tilesQuery.data
+						: []
 
 				// Build a map of known tile ids from FLOOR_TILES for
 				// validation — existing tiles that reference unknown types

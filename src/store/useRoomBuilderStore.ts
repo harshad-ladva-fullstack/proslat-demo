@@ -62,6 +62,7 @@ interface RoomBuilderState {
 
 	roomParams: RoomParams
 	setRoomParams: (p: Partial<RoomParams>) => void
+	setRoomParamsOnly: (p: Partial<RoomParams>) => void
 
 	roomGroup: Group | null
 	regenerateRoom: () => void
@@ -209,6 +210,9 @@ export const useRoomBuilderStore = create<RoomBuilderState>((set, get) => ({
 				roomGroup: generateRoom(updated),
 			}
 		}),
+
+	setRoomParamsOnly: p =>
+		set(state => ({ roomParams: { ...state.roomParams, ...p } })),
 
 	roomGroup: generateRoom({
 		width: 10,

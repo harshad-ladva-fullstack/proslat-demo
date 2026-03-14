@@ -107,12 +107,12 @@ export const COLLISION_RULES = [
 	{
 		type: MODEL_TYPES.middleWallCabinet,
 		ignoreTypes: [MODEL_TYPES.default],
-		canSnap: [MODEL_TYPES.middleWallCabinet] as string[],
+		canSnap: [MODEL_TYPES.middleWallCabinet, MODEL_TYPES.default] as string[],
 	},
 	{
 		type: MODEL_TYPES.topWallCabinet,
 		ignoreTypes: [MODEL_TYPES.default],
-		canSnap: [MODEL_TYPES.topWallCabinet] as string[],
+		canSnap: [MODEL_TYPES.topWallCabinet, MODEL_TYPES.default] as string[],
 	},
 	{
 		type: MODEL_TYPES.tile,
