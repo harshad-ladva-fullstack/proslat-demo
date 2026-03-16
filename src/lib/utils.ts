@@ -424,8 +424,23 @@ export function getFrontEdgePoints(object: Object3D) {
 export const checkIfSnap = (distance: number) =>
 	distance < SNAP_DISTANCE_WALL && distance > -0.5
 
+const MODEL_NAME_ALIASES: Record<string, string> = {
+	cornerwallmountlux: 'cornerWallMountLux',
+	cornerwallmountleft: 'cornerWallMountLeft',
+	cornerwallmountright: 'cornerWallMountRight',
+	cornerwallmountluxleft: 'cornerWallMountLeft',
+	cornerwallmountluxright: 'cornerWallMountRight',
+}
+
+const normalizeModelName = (name: string): string => {
+	const normalized = name.replace(/\s+/g, '').trim()
+	const alias = MODEL_NAME_ALIASES[normalized.toLowerCase()]
+	return alias || normalized
+}
+
 export const getModelPath = (name: string): string => {
-	return MODEL_URL + `${name}.glb`
+	const normalizedName = normalizeModelName(name)
+	return MODEL_URL + `${normalizedName}.glb`
 }
 
 export const getModelImagePath = (name: string): string => {

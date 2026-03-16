@@ -8,16 +8,16 @@ import type { LightBarComponent } from '../../types'
 
 // ── FBX model paths (served from /public) ────────────────────────────────────
 const ALL_PATHS = [
-	'/Ceiling Light Models/Hub.fbx',
-	'/Ceiling Light Models/18in Light.fbx',
-	'/Ceiling Light Models/36in Light.fbx',
-	'/Ceiling Light Models/T Connector.fbx',
-	'/Ceiling Light Models/Cross Connector.fbx',
-	'/Ceiling Light Models/45Degree Left.fbx',
-	'/Ceiling Light Models/45Degree Rightt.fbx',
-	'/Ceiling Light Models/Left Angle Connector.fbx',
-	'/Ceiling Light Models/Right Angle Connector.fbx',
-	'/Ceiling Light Models/Y Connector.fbx',
+	'/ceiling-light-models/hub.fbx',
+	'/ceiling-light-models/light-18in.fbx',
+	'/ceiling-light-models/light-36in.fbx',
+	'/ceiling-light-models/t-connector.fbx',
+	'/ceiling-light-models/cross-connector.fbx',
+	'/ceiling-light-models/left-45-degree.fbx',
+	'/ceiling-light-models/right-45-degree.fbx',
+	'/ceiling-light-models/left-angle-connector.fbx',
+	'/ceiling-light-models/right-angle-connector.fbx',
+	'/ceiling-light-models/y-connector.fbx',
 ] as const
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
