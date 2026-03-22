@@ -251,27 +251,37 @@ export function CeilingSidebar() {
 					)}
 
 					{/* Rotate */}
-					<div className='flex items-center gap-2 mb-3'>
-						<span className='text-xs text-gray-600'>Rotate:</span>
-						<button
-							className='px-2 py-1 text-xs bg-white rounded border border-gray-300 hover:bg-gray-100'
-							onClick={() => rotateComponent(selectedComp.id, -45)}
-						>
-							-45°
-						</button>
-						<button
-							className='px-2 py-1 text-xs bg-white rounded border border-gray-300 hover:bg-gray-100'
-							onClick={() => rotateComponent(selectedComp.id, 45)}
-						>
-							+45°
-						</button>
-						<button
-							className='px-2 py-1 text-xs bg-white rounded border border-gray-300 hover:bg-gray-100'
-							onClick={() => rotateComponent(selectedComp.id, 90)}
-						>
-							+90°
-						</button>
-					</div>
+					{selectedComp.type !== 'hub' && (
+						<div className='flex items-center gap-2 mb-3'>
+							<span className='text-xs text-gray-600'>Rotate:</span>
+							<button
+								className='px-2 py-1 text-xs bg-white rounded border border-gray-300 hover:bg-gray-100'
+								onClick={() => rotateComponent(selectedComp.id, -45)}
+							>
+								-45°
+							</button>
+							<button
+								className='px-2 py-1 text-xs bg-white rounded border border-gray-300 hover:bg-gray-100'
+								onClick={() => rotateComponent(selectedComp.id, 45)}
+							>
+								+45°
+							</button>
+							<button
+								className='px-2 py-1 text-xs bg-white rounded border border-gray-300 hover:bg-gray-100'
+								onClick={() => rotateComponent(selectedComp.id, 90)}
+							>
+								+90°
+							</button>
+						</div>
+					)}
+
+					{selectedComp.type === 'light-bar' && (
+						<div className='mb-3 p-2 bg-blue-50 rounded border border-blue-200'>
+							<p className='text-xs text-gray-600'>
+								<strong>Note:</strong> Light orientation is automatically determined by its connection port, but you can customize it with rotation controls above.
+							</p>
+						</div>
+					)}
 
 					{/* Remove */}
 					<button

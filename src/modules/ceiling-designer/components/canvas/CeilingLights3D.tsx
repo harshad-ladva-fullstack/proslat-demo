@@ -1,163 +1,208 @@
 import { Suspense, useMemo } from 'react'
 import { useLoader } from '@react-three/fiber'
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
-import { Box3, Group, Mesh, MeshStandardMaterial, Vector3 } from 'three'
+import { Group, Mesh, MeshStandardMaterial, Vector3, Box3, Quaternion } from 'three'
 import { useCeilingDesignerStore } from '../../store'
 import { useRoomBuilderStore } from '@/store/useRoomBuilderStore'
 import type { LightBarComponent } from '../../types'
 
-// ── FBX model paths (served from /public) ────────────────────────────────────
 const ALL_PATHS = [
-	'/ceiling-light-models/hub.fbx',
-	'/ceiling-light-models/light-18in.fbx',
-	'/ceiling-light-models/light-36in.fbx',
-	'/ceiling-light-models/t-connector.fbx',
-	'/ceiling-light-models/cross-connector.fbx',
-	'/ceiling-light-models/left-45-degree.fbx',
-	'/ceiling-light-models/right-45-degree.fbx',
-	'/ceiling-light-models/left-angle-connector.fbx',
-	'/ceiling-light-models/right-angle-connector.fbx',
-	'/ceiling-light-models/y-connector.fbx',
+	'/New/Hub.fbx',
+	'/New/18in Light.fbx',
+	'/New/36in Light.fbx',
+	'/New/T Connector.fbx',
+	'/New/Cross Connector.fbx',
+	'/New/45Degree Left.fbx',
+	'/New/45Degree Rightt.fbx',
+	'/New/Left Angle Connector.fbx',
+	'/New/Right Angle Connector.fbx',
+	'/New/Y Connector.fbx',
 ] as const
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/** Clone an FBX group, scale its longest dimension to targetMeters, and apply color.
- *  FBX files already have a ±90° X rotation baked in by Blender to orient them
- *  correctly for ceiling mounting — we must NOT override clone.rotation so those
- *  baked rotations are preserved.  We call updateMatrixWorld before computing bbox
- *  so the bounding box accounts for all child-node transforms. */
-function cloneScaled(source: Group, targetMeters: number, hex: string): Group {
+function cloneAndScale(source: Group, targetMeters: number, color: string): Group {
 	const clone = source.clone(true) as Group
-
-	// Ensure all child matrices are up-to-date before bbox computation
 	clone.updateMatrixWorld(true)
 
-	// Scale to fit targetMeters on the longest axis
 	const box = new Box3().setFromObject(clone)
 	const size = box.getSize(new Vector3())
 	const maxDim = Math.max(size.x, size.y, size.z)
-	if (maxDim > 0.0001) clone.scale.multiplyScalar(targetMeters / maxDim)
+	if (maxDim > 0.0001) {
+		clone.scale.multiplyScalar(targetMeters / maxDim)
+	}
 
-	// Re-center after scaling so bounding-box centre sits at origin
-	clone.updateMatrixWorld(true)
-	const box2 = new Box3().setFromObject(clone)
-	const centre = box2.getCenter(new Vector3())
-	clone.position.sub(centre)
-
-	// Override every mesh's material with the chosen colour
-	const mat = new MeshStandardMaterial({ color: hex, metalness: 0.4, roughness: 0.5 })
+	const material = new MeshStandardMaterial({
+		color: color,
+		metalness: 0.4,
+		roughness: 0.5,
+	})
 	clone.traverse((child) => {
-		if ((child as Mesh).isMesh) (child as Mesh).material = mat
+		if ((child as Mesh).isMesh) {
+			;(child as Mesh).material = material.clone()
+		}
 	})
 
 	return clone
 }
 
-// ── Single model instance ─────────────────────────────────────────────────────
+function getCenterOffset(model: Group): [number, number, number] {
+	const box = new Box3().setFromObject(model)
+	const center = box.getCenter(new Vector3())
+	return [-center.x, -center.y, -center.z]
+}
 
-/** Renders one FBX model at ceiling position.
- *  Models are authored flat (ceiling-mount orientation) so no X/Z tilt is needed.
- *  rotY spins the piece around the vertical axis to match its canvas rotation. */
-function CeilingFbxModel({
+// Calculate fixture rotation based on component type and ceiling normal
+// Flat components (naturally horizontal): hub, t-connector, elbow connectors, y-connector
+// Vertical components (need rotation to lie flat): light-bar, cross-connector
+function getFixtureRotationFromNormal(
+	componentType: string,
+	ceilingNormal?: { x: number; y: number; z: number },
+	canvasRotationRadians?: number
+): [number, number, number] {
+	const canvasRot = canvasRotationRadians || 0
+
+	// Components that are naturally flat on ceiling (no tilt needed)
+	const naturallyFlatTypes = ['hub', 't-connector', '45-left-elbow', '45-right-elbow', '90-connector-left', '90-connector-right', 'y-connector']
+	const isNaturallyFlat = naturallyFlatTypes.includes(componentType)
+
+	if (!ceilingNormal) {
+		// Default: flat ceiling pointing up
+		if (isNaturallyFlat) {
+			// These components lie flat naturally on ceiling
+			return [0, 0, canvasRot]
+		} else {
+			// Light bars and cross-connectors need 90° X-tilt to lie horizontally
+			return [Math.PI / 2, 0, canvasRot]
+		}
+	}
+
+	// For sloped ceilings: use ceiling normal to determine fixture orientation
+	const normal = new Vector3(ceilingNormal.x, ceilingNormal.y, ceilingNormal.z).normalize()
+	const defaultUp = new Vector3(0, 1, 0)  // Default ceiling points up
+	const lookDir = normal.multiplyScalar(-1)  // Fixtures face downward from ceiling
+
+	const quat = new Quaternion()
+	quat.setFromUnitVectors(defaultUp, lookDir)
+
+	// For future: convert quaternion to Euler angles for sloped ceiling support
+	if (isNaturallyFlat) {
+		return [0, 0, canvasRot]
+	} else {
+		return [Math.PI / 2, 0, canvasRot]
+	}
+}
+
+function ModelComponent({
 	source,
-	targetMeters,
+	scale,
 	color,
 	position,
-	rotY,
+	rotation,
+	componentType,
+	ceilingNormal,
 }: {
 	source: Group
-	targetMeters: number
+	scale: number
 	color: string
 	position: [number, number, number]
-	rotY: number
+	rotation: number
+	componentType: string
+	ceilingNormal?: { x: number; y: number; z: number }
 }) {
-	const obj = useMemo(
-		() => cloneScaled(source, targetMeters, color),
-		[source, targetMeters, color],
+	const model = useMemo(
+		() => cloneAndScale(source, scale, color),
+		[source, scale, color]
 	)
 
+	const fixRotation = getFixtureRotationFromNormal(componentType, ceilingNormal, rotation)
+
 	return (
-		<group position={position} rotation={[0, rotY, 0]}>
-			<primitive object={obj} />
+		<group position={position} rotation={fixRotation}>
+			<primitive object={model} />
 		</group>
 	)
 }
 
-// ── Main renderer (needs Suspense) ────────────────────────────────────────────
-
 function CeilingLights3DContent() {
-	const components   = useCeilingDesignerStore((s) => s.components)
+	const components = useCeilingDesignerStore((s) => s.components)
+	const getComponentPosition = useCeilingDesignerStore((s) => s.getComponentPosition)
 	const ceilingWidth = useCeilingDesignerStore((s) => s.ceilingWidth)
 	const ceilingHeight = useCeilingDesignerStore((s) => s.ceilingHeight)
-	const roomParams   = useRoomBuilderStore((s) => s.roomParams)
+	const roomParams = useRoomBuilderStore((s) => s.roomParams)
 
-	// Load all models in one batch (hook always called – satisfies Rules of Hooks)
-	const [
-		hubSrc, lb18Src, lb36Src,
-		tSrc, crossSrc,
-		l45Src, r45Src,
-		l90Src, r90Src,
-		ySrc,
-	] = useLoader(FBXLoader, ALL_PATHS as unknown as string[]) as Group[]
+	const [hubSrc, lb18Src, lb36Src, tSrc, crossSrc, l45Src, r45Src, l90Src, r90Src, ySrc] = useLoader(
+		FBXLoader,
+		ALL_PATHS as unknown as string[]
+	) as Group[]
 
-	// 2D-canvas-px → 3D-world-meters mapping
 	const toWorld = useMemo(() => {
-		const sx   = roomParams.width  / (ceilingWidth  || 1)
-		const sz   = roomParams.depth  / (ceilingHeight || 1)
-		const yPos = roomParams.height - 0.02  // just below ceiling mesh
+		const sx = roomParams.width / (ceilingWidth || 1)
+		const sz = roomParams.depth / (ceilingHeight || 1)
+		const yPos = roomParams.height - 0.02
 		return (px: number, py: number) => ({
-			x: px * sx - roomParams.width  / 2,
+			x: px * sx - roomParams.width / 2,
 			y: yPos,
-			z: py * sz - roomParams.depth  / 2,
+			z: py * sz - roomParams.depth / 2,
 		})
 	}, [roomParams, ceilingWidth, ceilingHeight])
 
-	// Connector target size in metres (scaled from canvas CONNECTOR_SIZE=28px)
-	const connectorM = (28 / (ceilingWidth || 1)) * roomParams.width
-
 	const fbxByType: Record<string, Group> = useMemo(
 		() => ({
-			hub:                  hubSrc,
-			't-connector':        tSrc,
-			'cross-connector':    crossSrc,
-			'45-left-elbow':      l45Src,
-			'45-right-elbow':     r45Src,
-			'90-connector-left':  l90Src,
+			hub: hubSrc,
+			't-connector': tSrc,
+			'cross-connector': crossSrc,
+			'45-left-elbow': l45Src,
+			'45-right-elbow': r45Src,
+			'90-connector-left': l90Src,
 			'90-connector-right': r90Src,
-			'y-connector':        ySrc,
+			'y-connector': ySrc,
 		}),
-		[hubSrc, tSrc, crossSrc, l45Src, r45Src, l90Src, r90Src, ySrc],
+		[hubSrc, tSrc, crossSrc, l45Src, r45Src, l90Src, r90Src, ySrc]
 	)
 
 	if (components.length === 0) return null
 
+	const connectorScaleM = (28 / (ceilingWidth || 1)) * roomParams.width
+
 	return (
 		<group name='ceiling-lights'>
 			{components.map((comp) => {
-				const wpos  = toWorld(comp.x, comp.y)
+				const compPos = getComponentPosition(comp.id)
+				if (!compPos) return null
+
+				const wpos = toWorld(compPos.x, compPos.y)
+				const rotRad = (compPos.rotation * Math.PI) / 180
 				const color = comp.color === 'black' ? '#1a1a1a' : '#f0f0f0'
-				const rotY  = -(comp.rotation * Math.PI) / 180
-				const pos: [number, number, number] = [wpos.x, wpos.y, wpos.z]
+
+				// DEBUG: Log child component positioning
+				if (comp.parentId) {
+					console.log(`Component ${comp.id} (${comp.type}): canvas=${compPos.x},${compPos.y} → world=${wpos.x},${wpos.z} rot=${compPos.rotation}°`)
+				}
+
+				// Position offset: for light bars, shift back so p0 port aligns at calculated position
+				// p0 is at 180°, so we offset backward (opposite to rotation direction)
+				let pos: [number, number, number] = [wpos.x, wpos.y, wpos.z]
 
 				if (comp.type === 'light-bar') {
 					const lb = comp as LightBarComponent
-					// Canvas INCHES_TO_PX = 4, so px length = length * 4
-					const lengthM     = ((lb.length * 4) / (ceilingWidth || 1)) * roomParams.width
-					const src         = lb.length === 18 ? lb18Src : lb36Src
-					const lightColor  = lb.lightMode === 'rgb' ? '#ffccff' : '#fffde0'
+					const barScaleM = ((lb.length * 4) / (ceilingWidth || 1)) * roomParams.width
+					const lightColor = lb.lightMode === 'rgb' ? '#ffccff' : '#fffde0'
+
+					// Position is already calculated correctly by store (includes offset)
+					// No additional offset needed here
 
 					return (
-						<group key={comp.id} position={pos} rotation={[0, rotY, 0]}>
-							<CeilingFbxModel
-								source={src}
-								targetMeters={lengthM}
+						<group key={comp.id}>
+							<ModelComponent
+								source={lb.length === 18 ? lb18Src : lb36Src}
+								scale={barScaleM}
 								color={color}
-								position={[0, 0, 0]}
-								rotY={0}
+								position={pos}
+								rotation={rotRad}
+								componentType="light-bar"
+								ceilingNormal={comp.ceilingNormal}
 							/>
 							<pointLight
-								position={[0, -0.1, 0]}
+								position={[pos[0], pos[1] - 0.1, pos[2]]}
 								intensity={0.4}
 								distance={2}
 								color={lightColor}
@@ -170,47 +215,21 @@ function CeilingLights3DContent() {
 				if (!src) return null
 
 				return (
-					<CeilingFbxModel
+					<ModelComponent
 						key={comp.id}
 						source={src}
-						targetMeters={connectorM}
+						scale={connectorScaleM}
 						color={color}
 						position={pos}
-						rotY={rotY}
+						rotation={rotRad}
+						componentType={comp.type}
+						ceilingNormal={comp.ceilingNormal}
 					/>
 				)
 			})}
-
-			{/* Connection wires between parent → child */}
-			{components
-				.filter((c) => c.parentId)
-				.map((child) => {
-					const parent = components.find((c) => c.id === child.parentId)
-					if (!parent) return null
-					const a = toWorld(parent.x, parent.y)
-					const b = toWorld(child.x, child.y)
-					const midX = (a.x + b.x) / 2
-					const midZ = (a.z + b.z) / 2
-					const dist = Math.hypot(b.x - a.x, b.z - a.z)
-					const angle = Math.atan2(b.x - a.x, b.z - a.z)
-					const wireColor = child.color === 'black' ? '#222' : '#ccc'
-
-					return (
-						<mesh
-							key={`wire-${child.id}`}
-							position={[midX, a.y - 0.005, midZ]}
-							rotation={[0, angle, 0]}
-						>
-							<boxGeometry args={[0.008, 0.008, dist]} />
-							<meshStandardMaterial color={wireColor} />
-						</mesh>
-					)
-				})}
 		</group>
 	)
 }
-
-// ── Public export (self-contained Suspense) ───────────────────────────────────
 
 export function CeilingLights3D() {
 	return (

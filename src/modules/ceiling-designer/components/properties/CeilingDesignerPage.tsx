@@ -22,6 +22,11 @@ export function CeilingDesignerPage() {
 	const handleNext = async () => {
 		if (!projectId) return
 
+		// ── DEBUG: Log ONLY the final object that 3D renderer receives ──
+		console.log('=== 3D RENDERER FINAL DATA OBJECT ===')
+		console.log(JSON.stringify(components, null, 2))
+		console.log('=== END 3D DATA ===\n')
+
 		// Save ceiling layout to DB via project update
 		if (components.length > 0) {
 			try {
@@ -39,6 +44,7 @@ export function CeilingDesignerPage() {
 							rotation: c.rotation,
 							parentId: c.parentId,
 							childIds: c.childIds,
+							...(c.ceilingNormal ? { ceilingNormal: c.ceilingNormal } : {}),
 							...(c.type === 'light-bar'
 								? { length: (c as any).length, lightMode: (c as any).lightMode }
 								: {}),

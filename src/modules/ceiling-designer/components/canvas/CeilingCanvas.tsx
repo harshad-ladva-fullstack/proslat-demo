@@ -123,6 +123,8 @@ export function CeilingCanvas() {
 		placeHub,
 		placeComponent,
 		moveComponent,
+		removeComponent,
+		getComponentPosition,
 		hasHub,
 		ceilingWidth,
 		ceilingHeight,
@@ -134,6 +136,15 @@ export function CeilingCanvas() {
 	const [isPanning, setIsPanning] = useState(false)
 	const panStartRef = useRef({ x: 0, y: 0 })
 	const [panMode, setPanMode] = useState(false)
+
+	// ── Port highlighting during drag ──
+	const [draggedPort, setDraggedPort] = useState<{
+		componentId: string
+		portId: string
+		distance: number
+	} | null>(null)
+	const [highlightedPorts, setHighlightedPorts] = useState<Set<string>>(new Set())
+	const [dragMousePos, setDragMousePos] = useState<{ x: number; y: number } | null>(null)
 
 	// ── Center the ceiling rectangle on the canvas on first render ──
 	const computeCenteredOffset = useCallback(
@@ -211,26 +222,6 @@ export function CeilingCanvas() {
 		return () => el.removeEventListener('wheel', handleWheel)
 	}, [])
 
-	// ─── Find nearest open port ───
-	const findNearestPort = useCallback(
-		(x: number, y: number, excludeId?: string) => {
-			let best: { component: PlacedComponent; port: Port; distance: number } | null = null
-			for (const comp of components) {
-				if (comp.id === excludeId) continue
-				for (const port of comp.ports) {
-					if (port.connectedTo !== null) continue
-					const pos = portWorldPosition(comp, port)
-					const d = Math.hypot(pos.x - x, pos.y - y)
-					if (d < 50 && (!best || d < best.distance)) {
-						best = { component: comp, port, distance: d }
-					}
-				}
-			}
-			return best
-		},
-		[components]
-	)
-
 	// ─── Canvas mousedown → start pan or place component ───
 	const handleCanvasMouseDown = useCallback(
 		(e: React.MouseEvent<HTMLDivElement>) => {
@@ -250,16 +241,19 @@ export function CeilingCanvas() {
 			if (dragPayload) {
 				if (dragPayload.type === 'hub') {
 					placeHub(sx, sy)
-				} else if (hasHub()) {
-					const nearest = findNearestPort(sx, sy)
-					if (nearest) {
+				} else if (hasHub() && draggedPort) {
+					// Use draggedPort for placement (only if valid port found)
+					const parent = components.find((c) => c.id === draggedPort.componentId)
+					const port = parent?.ports.find((p) => p.id === draggedPort.portId)
+					if (parent && port) {
 						placeComponent(
 							dragPayload.type,
 							sx,
 							sy,
-							nearest.component.id,
-							nearest.port.id,
-							dragPayload.length
+							parent.id,
+							port.id,
+							'p0', // child component's connecting port (first port)
+							dragPayload.length || 36
 						)
 					}
 				}
@@ -270,7 +264,7 @@ export function CeilingCanvas() {
 			// Deselect
 			setSelectedComponentId(null)
 		},
-		[dragPayload, placeHub, placeComponent, hasHub, findNearestPort, setDragPayload, setSelectedComponentId, panMode, panOffset, clientToCanvas]
+		[dragPayload, draggedPort, placeHub, placeComponent, hasHub, components, setDragPayload, setSelectedComponentId, panMode, panOffset, clientToCanvas]
 	)
 
 	// ─── Canvas mouseup → also place when user releases mouse (true drag from sidebar) ───
@@ -283,22 +277,25 @@ export function CeilingCanvas() {
 
 			if (dragPayload.type === 'hub') {
 				placeHub(sx, sy)
-			} else if (hasHub()) {
-				const nearest = findNearestPort(sx, sy)
-				if (nearest) {
+			} else if (hasHub() && draggedPort) {
+				// Use draggedPort for placement (only if valid port found)
+				const parent = components.find((c) => c.id === draggedPort.componentId)
+				const port = parent?.ports.find((p) => p.id === draggedPort.portId)
+				if (parent && port) {
 					placeComponent(
 						dragPayload.type,
 						sx,
 						sy,
-						nearest.component.id,
-						nearest.port.id,
+						parent.id,
+						port.id,
+						'p0', // child component's connecting port
 						dragPayload.length
 					)
 				}
 			}
 			setDragPayload(null)
 		},
-		[dragPayload, placeHub, placeComponent, hasHub, findNearestPort, setDragPayload, clientToCanvas]
+		[dragPayload, draggedPort, placeHub, placeComponent, hasHub, components, setDragPayload, clientToCanvas]
 	)
 
 	// ─── Pan: global mousemove / mouseup ───
@@ -319,6 +316,50 @@ export function CeilingCanvas() {
 		}
 	}, [isPanning])
 
+	// ─── Port highlighting during drag from sidebar ───
+	useEffect(() => {
+		if (!dragPayload) {
+			setHighlightedPorts(new Set())
+			setDraggedPort(null)
+			setDragMousePos(null)
+			return
+		}
+
+		const handleMouseMove = (e: MouseEvent) => {
+			const pos = clientToCanvas(e.clientX, e.clientY)
+			setDragMousePos(pos)
+
+			// Find all empty ports within snap radius (80px)
+			const SNAP_RADIUS = 80
+			const emptyPorts = new Set<string>()
+			let best: { componentId: string; portId: string; distance: number } | null = null
+
+			for (const comp of components) {
+				for (const port of comp.ports) {
+					if (port.connectedTo !== null) continue
+
+					const portPos = portWorldPosition(comp, port)
+					const d = Math.hypot(portPos.x - pos.x, portPos.y - pos.y)
+
+					if (d < SNAP_RADIUS) {
+						emptyPorts.add(`${comp.id}-${port.id}`)
+						if (!best || d < best.distance) {
+							best = { componentId: comp.id, portId: port.id, distance: d }
+						}
+					}
+				}
+			}
+
+			setHighlightedPorts(emptyPorts)
+			setDraggedPort(best)
+		}
+
+		window.addEventListener('mousemove', handleMouseMove)
+		return () => {
+			window.removeEventListener('mousemove', handleMouseMove)
+		}
+	}, [dragPayload, components, clientToCanvas])
+
 	// ─── Component mousedown → start drag ───
 	const handleComponentMouseDown = useCallback(
 		(e: React.MouseEvent, comp: PlacedComponent) => {
@@ -326,13 +367,14 @@ export function CeilingCanvas() {
 			if (panMode) return
 			setSelectedComponentId(comp.id)
 			const { x, y } = clientToCanvas(e.clientX, e.clientY)
+			const compPos = getComponentPosition(comp.id) || { x: comp.x, y: comp.y, rotation: comp.rotation }
 			setDragging({
 				id: comp.id,
-				offsetX: x - comp.x,
-				offsetY: y - comp.y,
+				offsetX: x - compPos.x,
+				offsetY: y - compPos.y,
 			})
 		},
-		[setSelectedComponentId, clientToCanvas, panMode]
+		[setSelectedComponentId, getComponentPosition, clientToCanvas, panMode]
 	)
 
 	// ─── Drag: global mousemove / mouseup ───
@@ -340,64 +382,307 @@ export function CeilingCanvas() {
 		if (!dragging) return
 
 		const handleMove = (e: MouseEvent) => {
-			const { x, y } = clientToCanvas(e.clientX, e.clientY)
-			const sx = snap(x - dragging.offsetX)
-			const sy = snap(y - dragging.offsetY)
-			const cx = Math.max(0, Math.min(ceilingWidth, sx))
-			const cy = Math.max(0, Math.min(ceilingHeight, sy))
-			moveComponent(dragging.id, cx, cy)
+			const draggedComp = components.find((c) => c.id === dragging.id)
+			if (!draggedComp) return
+
+			const pos = clientToCanvas(e.clientX, e.clientY)
+
+			// Hub can move freely within ceiling bounds
+			if (draggedComp.type === 'hub') {
+				const hubRadius = HUB_RADIUS
+				const sx = Math.max(hubRadius, Math.min(ceilingWidth - hubRadius, pos.x))
+				const sy = Math.max(hubRadius, Math.min(ceilingHeight - hubRadius, pos.y))
+				moveComponent(dragging.id, sx, sy)
+				setDraggedPort(null)
+			} else {
+				// Other components: find empty ports within snap radius (80px)
+				const SNAP_RADIUS = 80
+				let best: { componentId: string; portId: string; distance: number } | null = null
+
+				for (const comp of components) {
+					for (const port of comp.ports) {
+						if (port.connectedTo !== null) continue
+
+						const portPos = portWorldPosition(comp, port)
+						const d = Math.hypot(portPos.x - pos.x, portPos.y - pos.y)
+
+						if (d < SNAP_RADIUS) {
+							if (!best || d < best.distance) {
+								best = { componentId: comp.id, portId: port.id, distance: d }
+							}
+						}
+					}
+				}
+
+				// Store the nearest port, will use on mouseup to validate placement
+				setDraggedPort(best)
+			}
 		}
 
-		const handleUp = () => setDragging(null)
+		const handleUp = () => {
+			const draggedComp = components.find((c) => c.id === dragging.id)
+			if (!draggedComp) return
+
+			// Hub: already positioned by moveComponent, nothing to validate
+			if (draggedComp.type === 'hub') {
+				setDragging(null)
+				setDraggedPort(null)
+				return
+			}
+
+			// Other components: only allow movement if released over a valid empty port
+			if (draggedComp.parentId && draggedPort) {
+				const parent = components.find((c) => c.id === draggedPort!.componentId)
+				const port = parent?.ports.find((p) => p.id === draggedPort!.portId)
+
+				if (parent && port) {
+					// Remove component from current parent
+					removeComponent(dragging.id)
+					// Place it on the new port
+					placeComponent(
+						draggedComp.type,
+						0, 0, // position calculated by store
+						parent.id,
+						port.id,
+						'p0',
+						draggedComp.type === 'light-bar' ? (draggedComp as any).length : undefined
+					)
+				}
+			}
+			setDragging(null)
+			setDraggedPort(null)
+		}
+
 		window.addEventListener('mousemove', handleMove)
 		window.addEventListener('mouseup', handleUp)
 		return () => {
 			window.removeEventListener('mousemove', handleMove)
 			window.removeEventListener('mouseup', handleUp)
 		}
-	}, [dragging, moveComponent, ceilingWidth, ceilingHeight, clientToCanvas])
+	}, [dragging, draggedPort, components, moveComponent, removeComponent, placeComponent, clientToCanvas, ceilingWidth, ceilingHeight])
 
 	// ─── Connection lines ───
-	const connectionLines = components
-		.filter((c) => c.parentId)
-		.map((child) => {
-			const parent = components.find((c) => c.id === child.parentId)
-			if (!parent) return null
+	// ─── Port highlights and snap preview during drag ───
+	const portHighlightsAndPreview = () => {
+		const items: React.ReactNode[] = []
 
-			if (child.type === 'light-bar') {
-				const lb = child as LightBarComponent
-				const barColor =
-					lb.lightMode === 'rgb'
-						? 'url(#rgbGradient)'
-						: child.color === 'black'
-							? '#1a1a1a'
-							: '#e0e0e0'
-				return (
-					<g key={`line-${child.id}`}>
-						<line
-							x1={parent.x} y1={parent.y} x2={child.x} y2={child.y}
-							stroke={barColor} strokeWidth={LIGHT_BAR_WIDTH + 2} strokeLinecap='round'
-						/>
-						<line
-							x1={parent.x} y1={parent.y} x2={child.x} y2={child.y}
-							stroke={lb.lightMode === 'rgb' ? 'url(#rgbGradient)' : 'rgba(255,255,255,0.4)'}
-							strokeWidth={2} strokeLinecap='round'
-						/>
-					</g>
-				)
+		if (dragPayload && dragMousePos) {
+			// Render highlights for all empty ports
+			for (const comp of components) {
+				for (const port of comp.ports) {
+					if (port.connectedTo !== null) continue
+
+					const portKey = `${comp.id}-${port.id}`
+					const isHighlighted = highlightedPorts.has(portKey)
+					if (!isHighlighted) continue
+
+					const portPos = portWorldPosition(comp, port)
+					const isDragged = draggedPort?.componentId === comp.id && draggedPort?.portId === port.id
+
+					items.push(
+						<g key={`port-highlight-${portKey}`}>
+							{/* Outer pulsing glow circle - stronger for snap target */}
+							<circle
+								cx={portPos.x}
+								cy={portPos.y}
+								r={isDragged ? 32 : 24}
+								fill='#ff1493'
+								opacity={isDragged ? 0.5 : 0.25}
+								filter={isDragged ? 'url(#portGlowStrong)' : 'url(#portGlowMedium)'}
+								style={{
+									animation: 'pulse 1.5s ease-in-out infinite',
+									transition: 'r 0.2s, opacity 0.2s, filter 0.2s',
+								}}
+							/>
+							{/* Middle glow layer */}
+							<circle
+								cx={portPos.x}
+								cy={portPos.y}
+								r={isDragged ? 20 : 14}
+								fill='#ff69b4'
+								opacity={isDragged ? 0.35 : 0.15}
+								filter={isDragged ? 'url(#portGlowMedium)' : 'url(#portGlowSubtle)'}
+								style={{
+									animation: isDragged ? 'pulse 1s ease-in-out infinite' : 'none',
+									transition: 'r 0.2s, opacity 0.2s',
+								}}
+							/>
+							{/* Solid core dot - larger for snap target */}
+							<circle
+								cx={portPos.x}
+								cy={portPos.y}
+								r={isDragged ? 8 : 5}
+								fill={isDragged ? '#ff1493' : '#ff69b4'}
+								opacity={isDragged ? 1 : 0.8}
+								filter={isDragged ? 'url(#portGlowStrong)' : 'url(#portGlowMedium)'}
+								style={{
+									transition: 'r 0.2s, fill 0.2s, opacity 0.2s',
+								}}
+							/>
+						</g>
+					)
+				}
 			}
-			return (
-				<line
-					key={`line-${child.id}`}
-					x1={parent.x} y1={parent.y} x2={child.x} y2={child.y}
-					stroke={child.color === 'black' ? '#333' : '#ccc'}
-					strokeWidth={LIGHT_BAR_WIDTH} strokeLinecap='round'
-				/>
-			)
-		})
+
+			// Render snap preview if a valid port is selected
+			if (draggedPort) {
+				const parent = components.find((c) => c.id === draggedPort.componentId)
+				const port = parent?.ports.find((p) => p.id === draggedPort.portId)
+
+				if (parent && port && dragPayload.type !== 'hub') {
+					const parentPortPos = portWorldPosition(parent, port)
+
+					// Calculate preview position based on component type
+					// Match the store's calculateComponentPosition logic
+					const totalAngle = parent.rotation + port.angle
+					let previewX = parentPortPos.x
+					let previewY = parentPortPos.y
+					let previewRotation = totalAngle
+
+					if (dragPayload.type === 'light-bar') {
+						const barLength = dragPayload.length || 36
+						const halfLen = (barLength * INCHES_TO_PX) / 2
+						const rad = (totalAngle * Math.PI) / 180
+						// Position so light extends forward from port
+						previewX = parentPortPos.x + Math.sin(rad) * halfLen
+						previewY = parentPortPos.y - Math.cos(rad) * halfLen
+					}
+
+					// Draw connection line from parent to port
+					items.push(
+						<line
+							key='snap-connection-line'
+							x1={parent.x}
+							y1={parent.y}
+							x2={parentPortPos.x}
+							y2={parentPortPos.y}
+							stroke='#ff1493'
+							strokeWidth={2}
+							strokeDasharray='4,4'
+							opacity={0.6}
+						/>
+					)
+
+					// Draw preview component at snap position
+					if (dragPayload.type === 'light-bar') {
+						const barLength = dragPayload.length || 36
+						const halfLen = (barLength * INCHES_TO_PX) / 2
+						const rad = (previewRotation * Math.PI) / 180
+						const dx = Math.sin(rad) * halfLen
+						const dy = -Math.cos(rad) * halfLen
+
+						items.push(
+							<g key='snap-preview' opacity={0.4} style={{ pointerEvents: 'none' }}>
+								<line
+									x1={previewX - dx}
+									y1={previewY - dy}
+									x2={previewX + dx}
+									y2={previewY + dy}
+									stroke='#ff1493'
+									strokeWidth={LIGHT_BAR_WIDTH + 2}
+									strokeLinecap='round'
+									strokeDasharray='4,4'
+								/>
+								<circle cx={previewX} cy={previewY} r={4} fill='#ff1493' />
+							</g>
+						)
+					} else {
+						// Connector preview
+						const S = CONNECTOR_SIZE
+						const hs = S / 2
+						items.push(
+							<g key='snap-preview' opacity={0.4} style={{ pointerEvents: 'none' }}>
+								<rect
+									x={previewX - hs}
+									y={previewY - hs}
+									width={S}
+									height={S}
+									rx={4}
+									fill='#ff1493'
+									stroke='#ff1493'
+									strokeWidth={2}
+									strokeDasharray='4,4'
+									transform={`rotate(${previewRotation}, ${previewX}, ${previewY})`}
+								/>
+								<circle cx={previewX} cy={previewY} r={4} fill='#ff1493' />
+							</g>
+						)
+					}
+
+					// Draw rotation angle text
+					items.push(
+						<text
+							key='snap-angle-text'
+							x={previewX}
+							y={previewY - CONNECTOR_SIZE / 2 - 12}
+							textAnchor='middle'
+							fontSize={12}
+							fill='#ff1493'
+							fontWeight='bold'
+							style={{ pointerEvents: 'none' }}
+						>
+							{previewRotation}°
+						</text>
+					)
+				}
+			}
+		}
+
+		// Show highlights when dragging a placed component (must snap to empty port)
+		if (dragging && draggedPort) {
+			const parent = components.find((c) => c.id === draggedPort!.componentId)
+			if (parent) {
+				const port = parent.ports.find((p) => p.id === draggedPort!.portId)
+				if (port) {
+					const portPos = portWorldPosition(parent, port)
+
+					items.push(
+						<g key={`port-highlight-dragged-${parent.id}-${port.id}`}>
+							{/* Outer pulsing glow circle */}
+							<circle
+								cx={portPos.x}
+								cy={portPos.y}
+								r={32}
+								fill='#ff1493'
+								opacity={0.5}
+								filter='url(#portGlowStrong)'
+								style={{
+									animation: 'pulse 1.5s ease-in-out infinite',
+								}}
+							/>
+							{/* Middle glow layer */}
+							<circle
+								cx={portPos.x}
+								cy={portPos.y}
+								r={20}
+								fill='#ff69b4'
+								opacity={0.35}
+								filter='url(#portGlowMedium)'
+								style={{
+									animation: 'pulse 1s ease-in-out infinite',
+								}}
+							/>
+							{/* Solid core dot */}
+							<circle
+								cx={portPos.x}
+								cy={portPos.y}
+								r={8}
+								fill='#ff1493'
+								opacity={1}
+								filter='url(#portGlowStrong)'
+							/>
+						</g>
+					)
+				}
+			}
+		}
+	}
 
 	// ─── Render a single component ───
 	const renderComponent = (comp: PlacedComponent) => {
+		// Get actual position (accounts for parent position if child component)
+		const compPos = getComponentPosition(comp.id) || { x: comp.x, y: comp.y, rotation: comp.rotation }
+
 		const isSelected = comp.id === selectedComponentId
 		const fill = comp.color === 'black' ? '#1a1a1a' : '#f5f5f5'
 		const stroke = isSelected ? '#215296' : comp.color === 'black' ? '#444' : '#bbb'
@@ -408,20 +693,64 @@ export function CeilingCanvas() {
 			const r = HUB_RADIUS
 			const octPts = Array.from({ length: 8 }, (_, i) => {
 				const a = ((i * 45 - 90) * Math.PI) / 180
-				return `${comp.x + r * Math.cos(a)},${comp.y + r * Math.sin(a)}`
+				return `${compPos.x + r * Math.cos(a)},${compPos.y + r * Math.sin(a)}`
 			}).join(' ')
 
 			return (
 				<g key={comp.id} onMouseDown={(e) => handleComponentMouseDown(e, comp)} style={{ cursor: 'grab' }}>
 					<polygon points={octPts} fill={fill} stroke={stroke} strokeWidth={strokeW} />
 					{comp.ports.map((port) => {
-						const pos = portWorldPosition(comp, port)
+						const compWithPos = { ...comp, x: compPos.x, y: compPos.y, rotation: compPos.rotation }
+						const portPos = portWorldPosition(compWithPos, port)
+						const portKey = `${comp.id}-${port.id}`
+						const isHighlighted = highlightedPorts.has(portKey)
+						const isSnapTarget = draggedPort?.componentId === comp.id && draggedPort?.portId === port.id
+						const isEmpty = !port.connectedTo
+
+						// Determine styling based on port state
+						let portFill = '#888' // default for empty
+						let portRadius = 4
+						let filterUrl = 'none'
+						let strokeWidth = 1
+
+						if (port.connectedTo) {
+							portFill = '#215296'
+						} else if (isSnapTarget) {
+							// Snap target: strongest highlight
+							portFill = '#ff1493'
+							portRadius = 6
+							filterUrl = 'url(#portGlowStrong)'
+							strokeWidth = 2
+						} else if (isHighlighted) {
+							// Highlighted in drag radius
+							portFill = '#ff69b4'
+							portRadius = 5
+							filterUrl = 'url(#portGlowMedium)'
+							strokeWidth = 1.5
+						} else if (isEmpty) {
+							// Available but not highlighted
+							portFill = '#b3b3b3'
+							filterUrl = 'url(#portGlowSubtle)'
+						}
+
 						return (
-							<circle key={port.id} cx={pos.x} cy={pos.y} r={4}
-								fill={port.connectedTo ? '#215296' : '#888'} stroke='#fff' strokeWidth={1} />
+							<circle
+								key={port.id}
+								cx={portPos.x}
+								cy={portPos.y}
+								r={portRadius}
+								fill={portFill}
+								stroke='#fff'
+								strokeWidth={strokeWidth}
+								filter={filterUrl}
+								style={{
+									transition: 'r 0.15s ease, fill 0.15s ease, filter 0.15s ease',
+									pointerEvents: 'none',
+								}}
+							/>
 						)
 					})}
-					<text x={comp.x} y={comp.y + 4} textAnchor='middle' fontSize={10} fill={comp.color === 'black' ? '#aaa' : '#555'} fontWeight='bold'>
+					<text x={compPos.x} y={compPos.y + 4} textAnchor='middle' fontSize={10} fill={comp.color === 'black' ? '#aaa' : '#555'} fontWeight='bold'>
 						HUB
 					</text>
 				</g>
@@ -431,7 +760,7 @@ export function CeilingCanvas() {
 		if (comp.type === 'light-bar') {
 			const lb = comp as LightBarComponent
 			const halfLen = (lb.length * INCHES_TO_PX) / 2
-			const rad = (comp.rotation * Math.PI) / 180
+			const rad = (compPos.rotation * Math.PI) / 180
 			const dx = Math.sin(rad) * halfLen
 			const dy = -Math.cos(rad) * halfLen
 
@@ -445,27 +774,68 @@ export function CeilingCanvas() {
 			return (
 				<g key={comp.id} onMouseDown={(e) => handleComponentMouseDown(e, comp)} style={{ cursor: 'grab' }}>
 					{/* Main bar */}
-					<line x1={comp.x - dx} y1={comp.y - dy} x2={comp.x + dx} y2={comp.y + dy}
+					<line x1={compPos.x - dx} y1={compPos.y - dy} x2={compPos.x + dx} y2={compPos.y + dy}
 						stroke={barColor} strokeWidth={LIGHT_BAR_WIDTH + 2} strokeLinecap='round' />
 					{/* Border */}
-					<line x1={comp.x - dx} y1={comp.y - dy} x2={comp.x + dx} y2={comp.y + dy}
+					<line x1={compPos.x - dx} y1={compPos.y - dy} x2={compPos.x + dx} y2={compPos.y + dy}
 						stroke={stroke} strokeWidth={strokeW} strokeLinecap='round' fill='none' style={{ pointerEvents: 'none' }} />
 					{/* Glowing center */}
-					<line x1={comp.x - dx} y1={comp.y - dy} x2={comp.x + dx} y2={comp.y + dy}
+					<line x1={compPos.x - dx} y1={compPos.y - dy} x2={compPos.x + dx} y2={compPos.y + dy}
 						stroke={lb.lightMode === 'rgb' ? 'url(#rgbGradient)' : '#ffffffaa'}
 						strokeWidth={2} strokeLinecap='round' style={{ pointerEvents: 'none' }} />
 					{/* Port dots */}
 					{comp.ports.map((port) => {
-						const pos = portWorldPosition(comp, port)
+						const compWithPos = { ...comp, x: compPos.x, y: compPos.y, rotation: compPos.rotation }
+						const portPos = portWorldPosition(compWithPos, port)
+						const portKey = `${comp.id}-${port.id}`
+						const isHighlighted = highlightedPorts.has(portKey)
+						const isSnapTarget = draggedPort?.componentId === comp.id && draggedPort?.portId === port.id
+						const isEmpty = !port.connectedTo
+
+						// Determine styling based on port state
+						let portFill = '#888'
+						let portRadius = 4
+						let filterUrl = 'none'
+						let strokeWidth = 1
+
+						if (port.connectedTo) {
+							portFill = '#215296'
+						} else if (isSnapTarget) {
+							portFill = '#ff1493'
+							portRadius = 6
+							filterUrl = 'url(#portGlowStrong)'
+							strokeWidth = 2
+						} else if (isHighlighted) {
+							portFill = '#ff69b4'
+							portRadius = 5
+							filterUrl = 'url(#portGlowMedium)'
+							strokeWidth = 1.5
+						} else if (isEmpty) {
+							portFill = '#b3b3b3'
+							filterUrl = 'url(#portGlowSubtle)'
+						}
+
 						return (
-							<circle key={port.id} cx={pos.x} cy={pos.y} r={4}
-								fill={port.connectedTo ? '#215296' : '#888'} stroke='#fff' strokeWidth={1} />
+							<circle
+								key={port.id}
+								cx={portPos.x}
+								cy={portPos.y}
+								r={portRadius}
+								fill={portFill}
+								stroke='#fff'
+								strokeWidth={strokeWidth}
+								filter={filterUrl}
+								style={{
+									transition: 'r 0.15s ease, fill 0.15s ease, filter 0.15s ease',
+									pointerEvents: 'none',
+								}}
+							/>
 						)
 					})}
 					{/* Length label shown on the bar */}
-					<rect x={comp.x - 18} y={comp.y - 9} width={36} height={18} rx={3}
+					<rect x={compPos.x - 18} y={compPos.y - 9} width={36} height={18} rx={3}
 						fill='rgba(0,0,0,0.75)' style={{ pointerEvents: 'none' }} />
-					<text x={comp.x} y={comp.y + 4} textAnchor='middle' fontSize={11} fill='#fff' fontWeight='bold'
+					<text x={compPos.x} y={compPos.y + 4} textAnchor='middle' fontSize={11} fill='#fff' fontWeight='bold'
 						style={{ pointerEvents: 'none' }}>
 						{lb.length}"
 					</text>
@@ -476,15 +846,56 @@ export function CeilingCanvas() {
 		// ── Connectors - render proper distinct shapes ──
 		return (
 			<g key={comp.id} onMouseDown={(e) => handleComponentMouseDown(e, comp)} style={{ cursor: 'grab' }}>
-				{renderConnectorShape(comp, fill, stroke, strokeW)}
+				{renderConnectorShape({ ...comp, x: compPos.x, y: compPos.y, rotation: compPos.rotation }, fill, stroke, strokeW)}
 				{comp.ports.map((port) => {
-					const pos = portWorldPosition(comp, port)
+					const compWithPos = { ...comp, x: compPos.x, y: compPos.y, rotation: compPos.rotation }
+					const portPos = portWorldPosition(compWithPos, port)
+					const portKey = `${comp.id}-${port.id}`
+					const isHighlighted = highlightedPorts.has(portKey)
+					const isSnapTarget = draggedPort?.componentId === comp.id && draggedPort?.portId === port.id
+					const isEmpty = !port.connectedTo
+
+					// Determine styling based on port state
+					let portFill = '#888'
+					let portRadius = 4
+					let filterUrl = 'none'
+					let strokeWidth = 1
+
+					if (port.connectedTo) {
+						portFill = '#215296'
+					} else if (isSnapTarget) {
+						portFill = '#ff1493'
+						portRadius = 6
+						filterUrl = 'url(#portGlowStrong)'
+						strokeWidth = 2
+					} else if (isHighlighted) {
+						portFill = '#ff69b4'
+						portRadius = 5
+						filterUrl = 'url(#portGlowMedium)'
+						strokeWidth = 1.5
+					} else if (isEmpty) {
+						portFill = '#b3b3b3'
+						filterUrl = 'url(#portGlowSubtle)'
+					}
+
 					return (
-						<circle key={port.id} cx={pos.x} cy={pos.y} r={4}
-							fill={port.connectedTo ? '#215296' : '#888'} stroke='#fff' strokeWidth={1} />
+						<circle
+							key={port.id}
+							cx={portPos.x}
+							cy={portPos.y}
+							r={portRadius}
+							fill={portFill}
+							stroke='#fff'
+							strokeWidth={strokeWidth}
+							filter={filterUrl}
+							style={{
+								transition: 'r 0.15s ease, fill 0.15s ease, filter 0.15s ease',
+								pointerEvents: 'none',
+							}}
+						/>
 					)
 				})}
-				<text x={comp.x} y={comp.y + CONNECTOR_SIZE / 2 + 12} textAnchor='middle' fontSize={8} fill='#555'>
+				<text x={compPos.x} y={compPos.y + CONNECTOR_SIZE / 2 + 12} textAnchor='middle' fontSize={8} fill='#555'>
 					{COMPONENT_LABELS[comp.type]}
 				</text>
 			</g>
@@ -509,6 +920,18 @@ export function CeilingCanvas() {
 			onMouseDown={handleCanvasMouseDown}
 			onMouseUp={handleCanvasMouseUp}
 		>
+			<style>{`
+				@keyframes pulse {
+					0%, 100% {
+						opacity: 0.2;
+						filter: drop-shadow(0 0 2px rgba(255, 20, 147, 0.4));
+					}
+					50% {
+						opacity: 0.5;
+						filter: drop-shadow(0 0 8px rgba(255, 20, 147, 0.8));
+					}
+				}
+			`}</style>
 			<svg
 				width='100%'
 				height='100%'
@@ -523,6 +946,34 @@ export function CeilingCanvas() {
 						<stop offset='75%' stopColor='#0088ff' />
 						<stop offset='100%' stopColor='#ff00ff' />
 					</linearGradient>
+
+					{/* Glow filters for port highlighting */}
+					<filter id='portGlowSubtle'>
+						<feGaussianBlur stdDeviation='2' result='coloredBlur' />
+						<feMerge>
+							<feMergeNode in='coloredBlur' />
+							<feMergeNode in='SourceGraphic' />
+						</feMerge>
+					</filter>
+
+					<filter id='portGlowMedium'>
+						<feGaussianBlur stdDeviation='3.5' result='coloredBlur' />
+						<feMerge>
+							<feMergeNode in='coloredBlur' />
+							<feMergeNode in='SourceGraphic' />
+						</feMerge>
+					</filter>
+
+					<filter id='portGlowStrong'>
+						<feGaussianBlur stdDeviation='5' result='coloredBlur' />
+						<feComponentTransfer>
+							<feFuncA type='linear' slope='0.8' />
+						</feComponentTransfer>
+						<feMerge>
+							<feMergeNode in='coloredBlur' />
+							<feMergeNode in='SourceGraphic' />
+						</feMerge>
+					</filter>
 				</defs>
 
 				{/* Transform group for zoom + pan */}
@@ -531,8 +982,7 @@ export function CeilingCanvas() {
 					<rect x={0} y={0} width={ceilingWidth} height={ceilingHeight}
 						fill='none' stroke='#999' strokeWidth={2 / zoom} strokeDasharray={`${8 / zoom} ${4 / zoom}`} />
 
-					{/* Connection lines */}
-					<g style={{ pointerEvents: 'none' }}>{connectionLines}</g>
+					<g style={{ pointerEvents: 'none' }}>{portHighlightsAndPreview()}</g>
 
 					{/* Components */}
 					<g style={{ pointerEvents: 'all' }}>
