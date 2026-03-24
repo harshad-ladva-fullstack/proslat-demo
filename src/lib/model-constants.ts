@@ -47,8 +47,10 @@ export const MODEL_SLAP_RULES = [
 		],
 	},
 	{
+		// Middle wall cabinets can snap to all cabinet types (handled by allowedTargets empty array)
 		type: MODEL_TYPES.middleWallCabinet,
 		slapWall: true,
+		corner: true,
 		allowedTargets: [],
 		rules: [
 			{
@@ -57,8 +59,10 @@ export const MODEL_SLAP_RULES = [
 		],
 	},
 	{
+		// Top wall cabinets can snap to all cabinet types (handled by allowedTargets empty array)
 		type: MODEL_TYPES.topWallCabinet,
 		slapWall: true,
+		corner: true,
 		allowedTargets: [],
 		rules: [
 			{
@@ -100,19 +104,22 @@ export const COLLISION_RULES = [
 		canSnap: [] as string[],
 	},
 	{
+		// Default cabinets can snap to each other and to wall-mounted cabinets
 		type: MODEL_TYPES.default,
 		ignoreTypes: [MODEL_TYPES.middleWallCabinet, MODEL_TYPES.topWallCabinet],
-		canSnap: [MODEL_TYPES.default] as string[],
+		canSnap: [MODEL_TYPES.default, MODEL_TYPES.middleWallCabinet, MODEL_TYPES.topWallCabinet] as string[],
 	},
 	{
+		// Middle wall cabinets can snap to each other, default cabinets, and top wall cabinets
 		type: MODEL_TYPES.middleWallCabinet,
 		ignoreTypes: [MODEL_TYPES.default],
-		canSnap: [MODEL_TYPES.middleWallCabinet, MODEL_TYPES.default] as string[],
+		canSnap: [MODEL_TYPES.middleWallCabinet, MODEL_TYPES.default, MODEL_TYPES.topWallCabinet] as string[],
 	},
 	{
+		// Top wall cabinets can snap to each other, default cabinets, and middle wall cabinets
 		type: MODEL_TYPES.topWallCabinet,
 		ignoreTypes: [MODEL_TYPES.default],
-		canSnap: [MODEL_TYPES.topWallCabinet, MODEL_TYPES.default] as string[],
+		canSnap: [MODEL_TYPES.topWallCabinet, MODEL_TYPES.default, MODEL_TYPES.middleWallCabinet] as string[],
 	},
 	{
 		type: MODEL_TYPES.tile,

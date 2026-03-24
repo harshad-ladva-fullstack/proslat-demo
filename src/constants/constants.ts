@@ -1,4 +1,4 @@
-export const MODEL_GAP = 0.0005
+export const MODEL_GAP = 0.17
 
 // Радіуси злипання
 export const SNAP_DISTANCE_WALL = 2 // максимальна відстань для злипання зі стіною

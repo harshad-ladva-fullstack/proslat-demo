@@ -227,12 +227,13 @@ export function snapBoxesByPlanes(
 		// Using abs() here is wrong when sep < gap (models too close) because it
 		// would push A even further toward B.
 		const delta = sep - gap
-		if (Math.abs(delta) > 0.0001) shift.x = dir * delta
+		// Allow much smaller corrections to prevent gaps. Only skip if truly negligible (< 0.00001)
+		if (Math.abs(delta) > 0.000001) shift.x = dir * delta
 	} else if (snapZ) {
 		const dir = baseShift.z > 0 ? 1 : -1
 		const sep = Math.abs(baseShift.z)
 		const delta = sep - gap
-		if (Math.abs(delta) > 0.0001) shift.z = dir * delta
+		if (Math.abs(delta) > 0.000001) shift.z = dir * delta
 	} else {
 		return
 	}
@@ -292,6 +293,34 @@ export function snapBoxToCorner(
 
 	const combined = shiftA.add(shiftB)
 	refBox.position.add(combined)
+}
+
+/**
+ * Calculate the correct rotation quaternion for a corner cabinet based on which two walls form the corner.
+ * The cabinet should point away from the corner into the room (door facing room, not walls).
+ */
+export function getCornerRotationQuaternion(wallA: Object3D | undefined, wallB: Object3D | undefined): Quaternion {
+	const q = new Quaternion()
+	if (!wallA || !wallB) return q
+
+	const nameA = wallA.name
+	const nameB = wallB.name
+
+	// Sort names for consistent corner detection
+	const [wall1, wall2] = [nameA, nameB].sort()
+
+	// Map corner combinations to Y-axis rotation angles (in radians)
+	// wall_1 = front (+Z), wall_2 = back (-Z), wall_3 = left (+X), wall_4 = right (-X)
+	const cornerMap: Record<string, number> = {
+		'wall_1wall_3': Math.PI * -0.25,    // front-left: point back-right (-45°)
+		'wall_1wall_4': Math.PI * 0.25,     // front-right: point back-left (45°)
+		'wall_2wall_3': Math.PI * 0.75,     // back-left: point front-right (135°)
+		'wall_2wall_4': Math.PI * -0.75,    // back-right: point front-left (-135°)
+	}
+
+	const angle = cornerMap[wall1 + wall2] ?? 0
+	q.setFromAxisAngle(new Vector3(0, 1, 0), angle)
+	return q
 }
 
 export function getBackPlaneOfObject(object: Object3D): 'minZ' | 'maxZ' {
@@ -501,6 +530,46 @@ export const getPositionYByModelType = (type: string) => {
 	}
 }
 
+/**
+ * Get normalized quaternion for wall-mounted cabinets based on attached wall.
+ * Wall-mounted cabinets should always face outward from the wall they're attached to,
+ * regardless of any stored quaternion.
+ *
+ * @param type - Model type (e.g., 'middle-wall-cabinet', 'top-wall-cabinet')
+ * @param attachedWallName - Name of the wall ('wall_1', 'wall_2', 'wall_3', 'wall_4')
+ * @returns Quaternion that keeps the cabinet vertical and facing away from wall
+ */
+export const getWallMountQuaternion = (type: string, attachedWallName?: string): Quaternion => {
+	const isWallMount = type === 'middle-wall-cabinet' || type === 'top-wall-cabinet'
+
+	if (!isWallMount) {
+		return new Quaternion() // Identity quaternion for non-wall-mount cabinets
+	}
+
+	const quat = new Quaternion()
+
+	// Determine rotation based on which wall the cabinet is attached to
+	// Walls: wall_1 (front, -Z), wall_2 (back, +Z), wall_3 (left, -X), wall_4 (right, +X)
+	switch (attachedWallName) {
+		case 'wall_1': // Front wall: cabinet faces toward room (+Z)
+			quat.setFromAxisAngle(new Vector3(0, 1, 0), 0)
+			break
+		case 'wall_2': // Back wall: cabinet faces toward room (-Z)
+			quat.setFromAxisAngle(new Vector3(0, 1, 0), Math.PI)
+			break
+		case 'wall_3': // Left wall: cabinet faces toward room (+X)
+			quat.setFromAxisAngle(new Vector3(0, 1, 0), Math.PI / 2)
+			break
+		case 'wall_4': // Right wall: cabinet faces toward room (-X)
+			quat.setFromAxisAngle(new Vector3(0, 1, 0), -Math.PI / 2)
+			break
+		default: // No wall specified, default to identity
+			break
+	}
+
+	return quat
+}
+
 function canSnapToModel(
 	slapRules: { allowedTargets: string[] },
 	targetModel: Object3D
@@ -517,7 +586,17 @@ function canSnapToModel(
 	return slapRules.allowedTargets.includes(targetType)
 }
 
-const CORNER_MODELS = ['door2Base62Lux', 'door2Base62']
+// Multi-pass snapping: apply snapping up to 3 times to catch edge cases
+function applyMultiPassSnap(
+	snapFn: () => void,
+	draggingModel: Object3D,
+	maxPasses: number = 3
+) {
+	for (let i = 0; i < maxPasses; i++) {
+		snapFn()
+		draggingModel.updateMatrixWorld(true)
+	}
+}
 
 export const slapObject = (draggingModel: Object3D<Object3DEventMap>) => {
 	if (!draggingModel || !draggingModel.userData) {
@@ -531,51 +610,6 @@ export const slapObject = (draggingModel: Object3D<Object3DEventMap>) => {
 		return
 	}
 
-	const modelName = draggingModel.userData.modelName || ''
-	const isCornerOnly =
-		CORNER_MODELS.includes(modelName) ||
-		modelName.toLowerCase().includes('corner')
-
-	if (isCornerOnly) {
-		if (draggingModel.userData.isInCorner) {
-			const wallA = draggingModel.userData.cornerWalls[0]
-			const wallB = draggingModel.userData.cornerWalls[1]
-
-			// Determine corner chirality so the asymmetric L-shaped cabinet always
-			// has its open slot pointing into the room corner regardless of which
-			// wall the user was nearest when they dropped it.
-			//
-			// Identify the X-axis wall (left/right) and Z-axis wall (front/back)
-			// from their bounding-box centres — order-independent.
-			const centA = new Box3().setFromObject(wallA).getCenter(new Vector3())
-			const centB = new Box3().setFromObject(wallB).getCenter(new Vector3())
-			const isAXWall = Math.abs(centA.x) > Math.abs(centA.z)
-			const xCent   = isAXWall ? centA : centB   // centre of left/right wall
-			const zCent   = isAXWall ? centB : centA   // centre of front/back wall
-
-			// Inward normal signs:  left wall → xNX=+1, right wall → xNX=-1
-			//                       front wall → zNZ=+1, back wall → zNZ=-1
-			// chirality = -(xNX * zNZ): > 0 means the corner is "opposite-handed"
-			// to the model's default orientation and needs a +90° Y correction.
-			const xNX = -Math.sign(xCent.x)
-			const zNZ = -Math.sign(zCent.z)
-			if (-xNX * zNZ > 0) {
-				draggingModel.rotateY(Math.PI / 2)
-			}
-
-			snapBoxToCorner(draggingModel, wallA, wallB, MODEL_GAP)
-
-			draggingModel.userData.attachedWall = null
-			draggingModel.userData.attachedWallName = null
-			draggingModel.userData.savedQuaternion = null
-		} else {
-			draggingModel.userData.attachedWall = null
-			draggingModel.userData.attachedWallName = null
-			draggingModel.userData.savedQuaternion = null
-		}
-
-		return
-	}
 
 	const slapRules = MODEL_SLAP_RULES.find(rule => rule.type === modelType)
 	console.log('Slapping object:', draggingModel.userData)
@@ -591,6 +625,12 @@ export const slapObject = (draggingModel: Object3D<Object3DEventMap>) => {
 			draggingModel.userData.cornerWalls[1],
 			MODEL_GAP
 		)
+		// Apply correct rotation based on which corner it is
+		const cornerRotation = getCornerRotationQuaternion(
+			draggingModel.userData.cornerWalls[0],
+			draggingModel.userData.cornerWalls[1]
+		)
+		draggingModel.quaternion.copy(cornerRotation)
 		// In a corner snap we don't attach to a single wall
 		draggingModel.userData.attachedWall = null
 		// clear any saved orientation because corner doesn't have a single wall
@@ -598,15 +638,20 @@ export const slapObject = (draggingModel: Object3D<Object3DEventMap>) => {
 		return
 	}
 
-	// 1. Prefer snapping to another model for surfaces when that model is on the
-	// same wall or is a corner model. If not possible, fall back to wall snap.
+	// 1. Check if this type has a side snap rule available
+	// ALL cabinet types with side snapping should prefer model-to-model snapping
+	// when a suitable target model is nearby, not just surface types.
 	const draggingType = draggingModel.userData.type
-	const canPreferModelSnap =
-		draggingType === 'surface' || draggingType === 'surface-wall'
+	const hasSideSnapRule = slapRules.rules.some(rule => rule.plane === 'side')
 
+	// Calculate if we can snap to the closest model
+	const hasClosestModel = draggingModel.userData.closestModel &&
+		canSnapToModel(slapRules, draggingModel.userData.closestModel)
+
+	// For cabinet types with side snap rules and a valid target model, prefer model snapping
 	if (
-		canPreferModelSnap &&
-		draggingModel.userData.closestModel &&
+		hasSideSnapRule &&
+		hasClosestModel &&
 		// allow if the target model is free-floating, in a corner, or attached to the same wall
 		(!draggingModel.userData.closestModel.userData?.attachedWallName ||
 			!!draggingModel.userData.closestModel.userData?.isInCorner ||
@@ -614,40 +659,48 @@ export const slapObject = (draggingModel: Object3D<Object3DEventMap>) => {
 				draggingModel.userData.closestWall?.name)
 	) {
 		// Snap to the side of the nearest model first if allowed by slapRules
-		if (canSnapToModel(slapRules, draggingModel.userData.closestModel)) {
-			const sideRule = slapRules.rules.find(rule => rule.plane === 'side')
-			if (sideRule) {
-				snapToModelSideUsingExistingFunction(
-					draggingModel,
-					draggingModel.userData.closestModel
-				)
+		console.log(`Attempting model snap for type: ${draggingType} to ${draggingModel.userData.closestModel.userData?.modelName}`)
 
-				// after model-side snapping, record attachedWall if we also have a closestWall
-				if (slapRules.slapWall && draggingModel.userData.closestWall) {
-					const q =
-						draggingModel.userData.savedQuaternion ||
-						draggingModel.userData.potentialQuaternion ||
-						null
-					if (q && q.isQuaternion) {
-						draggingModel.quaternion.copy(q)
-					}
-					snapToWallUsingExistingFunction(
-						draggingModel,
-						draggingModel.userData.closestWall
-					)
-					draggingModel.userData.attachedWall =
-						draggingModel.userData.closestWall
-					draggingModel.userData.attachedWallName =
-						draggingModel.userData.closestWall?.name ?? null
-				}
+		// Apply multi-pass snapping for better edge case handling
+		applyMultiPassSnap(
+			() => snapToModelSideUsingExistingFunction(
+				draggingModel,
+				draggingModel.userData.closestModel
+			),
+			draggingModel,
+			3
+		)
 
-				return
+		// after model-side snapping, record attachedWall if we also have a closestWall
+		if (slapRules.slapWall && draggingModel.userData.closestWall) {
+			const q =
+				draggingModel.userData.savedQuaternion ||
+				draggingModel.userData.potentialQuaternion ||
+				null
+			if (q && q.isQuaternion) {
+				draggingModel.quaternion.copy(q)
 			}
+			// Apply multi-pass wall snapping too
+			applyMultiPassSnap(
+				() => snapToWallUsingExistingFunction(
+					draggingModel,
+					draggingModel.userData.closestWall
+				),
+				draggingModel,
+				2
+			)
+			draggingModel.userData.attachedWall =
+				draggingModel.userData.closestWall
+			draggingModel.userData.attachedWallName =
+				draggingModel.userData.closestWall?.name ?? null
 		}
+
+		return
 	}
 
 	// 2. Спочатку злипання зі стіною (fallback)
 	if (slapRules.slapWall && draggingModel.userData.closestWall) {
+		console.log(`Wall snapping for ${draggingType} to wall: ${draggingModel.userData.closestWall.name}`)
 		// If the snapping algorithm previously computed a savedQuaternion (when
 		// the user manually selected a wall) or potentialQuaternion during
 		// dragging, apply it as the object's quaternion so the orientation is
@@ -660,9 +713,14 @@ export const slapObject = (draggingModel: Object3D<Object3DEventMap>) => {
 			draggingModel.quaternion.copy(q)
 		}
 
-		snapToWallUsingExistingFunction(
+		// Apply multi-pass wall snapping for better edge case handling
+		applyMultiPassSnap(
+			() => snapToWallUsingExistingFunction(
+				draggingModel,
+				draggingModel.userData.closestWall
+			),
 			draggingModel,
-			draggingModel.userData.closestWall
+			3
 		)
 		// record actual attached wall only after successful snap
 		draggingModel.userData.attachedWall = draggingModel.userData.closestWall
@@ -692,9 +750,14 @@ export const slapObject = (draggingModel: Object3D<Object3DEventMap>) => {
 
 		return
 	} else if (draggingModel.userData.detectedBottomObject) {
-		snapToModelBottomByClosestEdge(
+		// Apply multi-pass snapping for better edge case handling
+		applyMultiPassSnap(
+			() => snapToModelBottomByClosestEdge(
+				draggingModel,
+				draggingModel.userData.detectedBottomObject
+			),
 			draggingModel,
-			draggingModel.userData.detectedBottomObject
+			2
 		)
 
 		if (slapRules.slapWall && draggingModel.userData.closestWall) {
@@ -707,9 +770,14 @@ export const slapObject = (draggingModel: Object3D<Object3DEventMap>) => {
 				draggingModel.quaternion.copy(q)
 			}
 
-			snapToWallUsingExistingFunction(
+			// Apply multi-pass wall snapping
+			applyMultiPassSnap(
+				() => snapToWallUsingExistingFunction(
+					draggingModel,
+					draggingModel.userData.closestWall
+				),
 				draggingModel,
-				draggingModel.userData.closestWall
+				2
 			)
 			// after bottom-model snapping, if we also snap to wall, record it
 			draggingModel.userData.attachedWall = draggingModel.userData.closestWall
@@ -736,7 +804,7 @@ function snapToModelSideUsingExistingFunction(
 	draggingModel: Object3D,
 	targetModel: Object3D
 ) {
-	snapBoxesByPlanes(draggingModel, targetModel)
+	snapBoxesByPlanes(draggingModel, targetModel, 0) // Use 0 gap for no spacing
 }
 
 function snapToModelBottomByClosestEdge(

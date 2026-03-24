@@ -6,7 +6,6 @@ import {
 	ACESFilmicToneMapping,
 	Box3,
 	Object3D,
-	Quaternion,
 	SRGBColorSpace,
 	Vector3,
 } from 'three'
@@ -14,7 +13,7 @@ import { Loader } from '@react-three/drei'
 
 import { useRoomBuilderStore } from '@/store/useRoomBuilderStore'
 import { TILE_SIZE, FLOOR_TILES } from '@/constants/floor-tiles'
-import { loadModelFromBlob } from '@/lib/utils'
+import { loadModelFromBlob, getWallMountQuaternion } from '@/lib/utils'
 import { generateRoom } from '@/lib/roomGenerator'
 import { DropControl } from './DropControl'
 import { SceneSaver } from './SceneSaver'
@@ -248,10 +247,28 @@ export const Scene = ({ id }: SceneProps) => {
 					console.error('Failed to load model from server:', error)
 				}
 			} else if (projectData && !projectData.glbUrl) {
-				// No glbUrl - generate a default room
+				// No glbUrl - generate a room using saved params or default.
+				// Try to restore dimensions from localStorage first (for cases where
+				// the GLB hasn't been processed on the server yet but user already saved).
+				let roomWidth = 5
+				let roomDepth = 5
+				try {
+					const saved = id
+						? localStorage.getItem(`proslat_roomParams_${id}`)
+						: null
+					if (saved) {
+						const parsed = JSON.parse(saved)
+						roomWidth = parsed.width ?? 5
+						roomDepth = parsed.depth ?? 5
+						setRoomParamsOnly(parsed)
+					}
+				} catch {
+					// If localStorage retrieval fails, use defaults
+				}
+
 				const defaultRoom = generateRoom({
-					width: 5,
-					depth: 5,
+					width: roomWidth,
+					depth: roomDepth,
 					height: 3,
 					wallThickness: 0.1,
 					wallColor: '#ffffff',
@@ -504,11 +521,9 @@ export const Scene = ({ id }: SceneProps) => {
 										)
 									}
 									quaternion={
-										new Quaternion(
-											cabinet.quaternion.x,
-											cabinet.quaternion.y,
-											cabinet.quaternion.z,
-											cabinet.quaternion.w
+										getWallMountQuaternion(
+											cabinet.catalogModel.type,
+											cabinet.attachedWallName
 										)
 									}
 								/>
