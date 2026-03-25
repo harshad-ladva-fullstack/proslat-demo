@@ -25,6 +25,7 @@ export const DropControl = () => {
 		setCamControlDisabled,
 		setDraggingModelRef,
 		currentColors,
+		selectedWall,
 	} = useRoomBuilderStore()
 
 	const isShowRef = useRef(false)
@@ -164,6 +165,13 @@ export const DropControl = () => {
 				cancelAnimationFrame(rafIdRef.current)
 				rafIdRef.current = null
 				lastPointRef.current = null
+			}
+
+			// Check if wall is selected before allowing cabinet placement
+			if (!selectedWall) {
+				alert('Please select a wall first by holding Ctrl and right-clicking on a wall.')
+				setDraggingModelRef(null)
+				return
 			}
 
 			// Якщо draggingModelRef.current є null, спробуємо знайти ghost-model на сцені

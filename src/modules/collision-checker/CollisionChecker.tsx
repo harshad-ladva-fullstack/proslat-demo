@@ -598,8 +598,8 @@ export const CollisionChecker = () => {
 
 				obj.updateMatrixWorld(true)
 
-				// Collect floor cabinets and wall-mounts to detect vertical overlap
-				// (e.g. a tall fridge whose top extends above the wall-mount bottom)
+				// Collect floor cabinets and wall-mounts for collision detection
+				// Wall-mounts should NOT be moved - they stay at their fixed height
 				if (obj.userData.type === MODEL_TYPES.default) {
 					floorCabinetBoxes.push(getBoundingBoxExcludingHandles(obj))
 				} else if (
@@ -611,30 +611,8 @@ export const CollisionChecker = () => {
 			}
 		})
 
-		// For each wall-mount, push its Y up if a tall floor cabinet (e.g. fridge)
-		// occupies the same XZ footprint and its top exceeds the wall-mount's bottom.
-		if (floorCabinetBoxes.length > 0 && wallMountObjs.length > 0) {
-			for (const wallMount of wallMountObjs) {
-				const wmBox = getBoundingBoxExcludingHandles(wallMount)
-				let maxFloorTop = 0
-
-				for (const fcBox of floorCabinetBoxes) {
-					const xOverlap =
-						fcBox.max.x > wmBox.min.x && fcBox.min.x < wmBox.max.x
-					const zOverlap =
-						fcBox.max.z > wmBox.min.z && fcBox.min.z < wmBox.max.z
-					if (xOverlap && zOverlap && fcBox.max.y > maxFloorTop) {
-						maxFloorTop = fcBox.max.y
-					}
-				}
-
-				if (maxFloorTop > wmBox.min.y) {
-					const wmHalfHeight = (wmBox.max.y - wmBox.min.y) / 2
-					wallMount.position.y = maxFloorTop + MODEL_GAP + wmHalfHeight
-					wallMount.updateMatrixWorld(true)
-				}
-			}
-		}
+		// Wall-mounted cabinets should stay at their fixed height
+		// Collision detection will handle marking invalid positions
 	})
 
 	useFrame(() => {
@@ -702,6 +680,12 @@ export const CollisionChecker = () => {
 		debugBoxesRef.current = []
 
 		let isValid = true
+		
+		// Check if wall is selected - if not, mark as invalid
+		if (!selectedWall) {
+			isValid = false
+		}
+		
 		let wallIntersection = false
 		let wallIntersectionObj: Object3D | null = null
 		let isNear = false
@@ -946,6 +930,12 @@ export const CollisionChecker = () => {
 						isValid = true
 					}
 				}
+				
+				// Log collision for debugging
+				if (debug) {
+					console.log(`Collision detected between ${draggingModelRef.current.name} and ${obj.name}`)
+					console.log(`Dragging type: ${draggingType}, Target type: ${obj.userData?.type}`)
+				}
 			} else if (distance <= SNAP_DISTANCE_MODEL) {
 				isNear = true
 				hasSnapObject = true
@@ -1102,6 +1092,7 @@ export const CollisionChecker = () => {
 							.normalize()
 						const currentYaw = Math.atan2(currentForward.x, currentForward.z)
 
+						// Add Math.PI to make the back point to wall, so front faces away
 						const desiredYaw = Math.atan2(desiredDir.x, desiredDir.z) + Math.PI
 						let yawDelta = desiredYaw - currentYaw
 						yawDelta = ((yawDelta + Math.PI) % (Math.PI * 2)) - Math.PI
@@ -1685,7 +1676,7 @@ export const CollisionChecker = () => {
 					.normalize()
 				const currentYaw = Math.atan2(currentForward.x, currentForward.z)
 
-				// desired front yaw: make the model's back point to the wall, so front faces away
+				// Add Math.PI to make the back point to wall, so front faces away
 				const desiredYaw = Math.atan2(desiredDir.x, desiredDir.z) + Math.PI
 
 				// smallest delta in range [-PI, PI]

@@ -104,21 +104,24 @@ export const COLLISION_RULES = [
 		canSnap: [] as string[],
 	},
 	{
-		// Default cabinets can snap to each other and to wall-mounted cabinets
+		// Default (floor) cabinets should NOT ignore wall-mounted cabinets
+		// They should detect collisions with them
 		type: MODEL_TYPES.default,
-		ignoreTypes: [MODEL_TYPES.middleWallCabinet, MODEL_TYPES.topWallCabinet],
+		ignoreTypes: [], // Removed wall cabinet types from ignore list
 		canSnap: [MODEL_TYPES.default, MODEL_TYPES.middleWallCabinet, MODEL_TYPES.topWallCabinet] as string[],
 	},
 	{
-		// Middle wall cabinets can snap to each other, default cabinets, and top wall cabinets
+		// Middle wall cabinets should NOT ignore default cabinets
+		// They should detect collisions with them
 		type: MODEL_TYPES.middleWallCabinet,
-		ignoreTypes: [MODEL_TYPES.default],
+		ignoreTypes: [], // Removed default from ignore list
 		canSnap: [MODEL_TYPES.middleWallCabinet, MODEL_TYPES.default, MODEL_TYPES.topWallCabinet] as string[],
 	},
 	{
-		// Top wall cabinets can snap to each other, default cabinets, and middle wall cabinets
+		// Top wall cabinets should NOT ignore default cabinets
+		// They should detect collisions with them
 		type: MODEL_TYPES.topWallCabinet,
-		ignoreTypes: [MODEL_TYPES.default],
+		ignoreTypes: [], // Removed default from ignore list
 		canSnap: [MODEL_TYPES.topWallCabinet, MODEL_TYPES.default, MODEL_TYPES.middleWallCabinet] as string[],
 	},
 	{

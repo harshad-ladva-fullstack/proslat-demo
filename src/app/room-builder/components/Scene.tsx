@@ -12,6 +12,7 @@ import {
 import { Loader } from '@react-three/drei'
 
 import { useRoomBuilderStore } from '@/store/useRoomBuilderStore'
+import { useCeilingDesignerStore } from '@/modules/ceiling-designer/store'
 import { TILE_SIZE, FLOOR_TILES } from '@/constants/floor-tiles'
 import { loadModelFromBlob, getWallMountQuaternion } from '@/lib/utils'
 import { generateRoom } from '@/lib/roomGenerator'
@@ -78,6 +79,8 @@ export const Scene = ({ id }: SceneProps) => {
 		floorTiles,
 		setRoomParamsOnly,
 	} = useRoomBuilderStore()
+
+	const resetCeilingDesigner = useCeilingDesignerStore((s) => s.resetCeilingDesigner)
 
 	// Keep a ref to current floorTiles so we can access the latest in-memory
 	// tiles inside effects without adding floorTiles as a dep (which would
@@ -190,10 +193,11 @@ export const Scene = ({ id }: SceneProps) => {
 			// Reset store to a clean state similar to a full page reload so
 			// state from the previous project doesn't leak in.
 			resetProjectState()
+			resetCeilingDesigner()
 			clearRoomModel()
 			setCabinets([])
 		}
-	}, [id, clearRoomModel, setCabinets, setFloorTiles, resetProjectState])
+	}, [id, clearRoomModel, setCabinets, setFloorTiles, resetProjectState, resetCeilingDesigner])
 
 	useEffect(() => {
 		if (!id) {
