@@ -128,6 +128,21 @@ export const DropControl = () => {
 
 		const handleDragOver = (e: DragEvent) => {
 			e.preventDefault()
+			
+			// Check if wall is selected before showing ghost model
+			if (!selectedWall) {
+				// Don't show ghost model if no wall is selected
+				if (isShowRef.current) {
+					setIsShow(false)
+					isShowRef.current = false
+				}
+				if (camControlDisabledRef.current) {
+					setCamControlDisabled(false)
+					camControlDisabledRef.current = false
+				}
+				return
+			}
+			
 			if (!isShowRef.current) {
 				setIsShow(true)
 				isShowRef.current = true
@@ -171,6 +186,12 @@ export const DropControl = () => {
 			if (!selectedWall) {
 				alert('Please select a wall first by holding Ctrl and right-clicking on a wall.')
 				setDraggingModelRef(null)
+				// Clean up
+				if (rafIdRef.current != null) {
+					cancelAnimationFrame(rafIdRef.current)
+					rafIdRef.current = null
+					lastPointRef.current = null
+				}
 				return
 			}
 
@@ -270,6 +291,7 @@ export const DropControl = () => {
 		createProjectModelMutation,
 		setCamControlDisabled,
 		setDraggingModelRef,
+		selectedWall,
 	])
 
 	return isShow && modelType?.type ? (

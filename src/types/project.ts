@@ -10,4 +10,9 @@ export interface Project {
 	updatedAt?: string
 	models?: Model[]
 	tiles?: ITile[]
+	roomWidth?: number
+	roomDepth?: number
+	roomHeight?: number
+	wallColor?: string
+	floorColor?: string
 }

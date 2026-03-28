@@ -42,6 +42,8 @@ export interface CeilingComponent {
 	parentId: string | null
 	/** IDs of components connected after this one */
 	childIds: string[]
+	/** Ceiling surface normal (world space) for proper fixture orientation. Defaults to [0,1,0] for flat ceilings */
+	ceilingNormal?: { x: number; y: number; z: number }
 }
 
 /** Light bar extends CeilingComponent with length and light mode */

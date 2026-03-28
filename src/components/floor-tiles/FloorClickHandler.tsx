@@ -74,6 +74,11 @@ export const FloorClickHandler = () => {
 			return
 		}
 		if (serialized === lastPostedTilesRef.current) return
+		
+		// Save to localStorage immediately
+		localStorage.setItem(`proslat_tiles_${projectId}`, serialized)
+		console.log(`Saved ${floorTiles.length} tiles to localStorage`)
+		
 		debounced({ projectId, tiles: floorTiles })
 	}, [floorTiles, projectId])
 

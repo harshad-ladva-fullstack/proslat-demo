@@ -17,11 +17,64 @@ import {
 	LIGHT_BAR_PRICE_18,
 	LIGHT_BAR_PRICE_36,
 	COMPONENT_PRICES,
+	HUB_RADIUS,
+	CONNECTOR_SIZE,
+	INCHES_TO_PX,
 } from '../constants'
 
 let _nextId = 1
 function nextId(): string {
 	return `cl_${_nextId++}`
+}
+
+/**
+ * Calculate where a child component should be placed given the parent port it's attaching to.
+ * Returns the position (x, y) and rotation for the child component.
+ */
+function calculateComponentPosition(
+	parent: CeilingComponent,
+	parentPort: { angle: number },
+	childType: CeilingComponentType,
+	childLength?: LightBarLength
+): { x: number; y: number; rotation: number } {
+	// Total angle: parent's rotation + port's angle
+	const totalAngle = parent.rotation + parentPort.angle
+	const rad = (totalAngle * Math.PI) / 180
+
+	// Calculate port's world position (where the child attaches)
+	const portDist =
+		parent.type === 'hub'
+			? HUB_RADIUS + 4
+			: parent.type === 'light-bar'
+				? (((parent as LightBarComponent).length || 36) * INCHES_TO_PX) / 2
+				: CONNECTOR_SIZE / 2 + 4
+	const portX = parent.x + Math.sin(rad) * portDist
+	const portY = parent.y - Math.cos(rad) * portDist
+
+	// Rotation of child = direction child port faces = parent port direction
+	const childRotation = totalAngle
+
+	// Calculate child's center position based on its type
+	let childX = portX
+	let childY = portY
+
+	if (childType === 'light-bar') {
+		// Light bar: p0 port is at the connection point, light extends outward
+		// Center is offset FORWARD in the direction the light is facing
+		const barLen = childLength || 36
+		const halfLen = (barLen * INCHES_TO_PX) / 2
+		// Offset center forward from port (in direction light is pointing)
+		const forwardRad = (childRotation * Math.PI) / 180
+		childX = portX + Math.sin(forwardRad) * halfLen
+		childY = portY - Math.cos(forwardRad) * halfLen
+	}
+	// For connectors: center aligns with port, so use portX/portY directly
+
+	return {
+		x: childX,
+		y: childY,
+		rotation: childRotation,
+	}
 }
 
 interface CeilingDesignerState {
@@ -49,6 +102,7 @@ interface CeilingDesignerState {
 		y: number,
 		parentId: string,
 		parentPortId: string,
+		childPortId: string,
 		length?: LightBarLength
 	) => string | null
 	moveComponent: (id: string, x: number, y: number) => void
@@ -59,6 +113,7 @@ interface CeilingDesignerState {
 
 	// Queries
 	getComponent: (id: string) => PlacedComponent | undefined
+	getComponentPosition: (id: string) => { x: number; y: number; rotation: number } | null
 	hasHub: () => boolean
 	getTotalLightBarInches: () => number
 	canAddLightBar: (lengthInches: LightBarLength) => boolean
@@ -110,7 +165,7 @@ export const useCeilingDesignerStore = create<CeilingDesignerState>(
 		},
 
 		// ── Place any other component ──
-		placeComponent: (type, x, y, parentId, parentPortId, length) => {
+		placeComponent: (type, _x, _y, parentId, parentPortId, childPortId, length) => {
 			const state = get()
 			if (!state.hasHub()) return null
 
@@ -129,18 +184,24 @@ export const useCeilingDesignerStore = create<CeilingDesignerState>(
 			const id = nextId()
 			const ports = createPorts(type)
 
-			// Mark the first port of the new component as connected to parent
+			// Mark the specified port of the new component as connected to parent
 			if (ports.length > 0) {
-				ports[0].connectedTo = parentId
+				const childPort = ports.find((p) => p.id === childPortId)
+				if (childPort) {
+					childPort.connectedTo = parentId
+				}
 			}
+
+			// Calculate correct position and rotation based on parent port
+			const posData = calculateComponentPosition(parent, pPort, type, length)
 
 			const base: CeilingComponent = {
 				id,
 				type,
 				color: state.activeColor,
-				x,
-				y,
-				rotation: 0,
+				x: posData.x,
+				y: posData.y,
+				rotation: posData.rotation,
 				ports,
 				parentId,
 				childIds: [],
@@ -256,6 +317,29 @@ export const useCeilingDesignerStore = create<CeilingDesignerState>(
 
 		// ── Queries ──
 		getComponent: (id) => get().components.find((c) => c.id === id),
+
+
+	getComponentPosition: (id) => {
+		const comp = get().components.find((c) => c.id === id)
+		if (!comp) return null
+
+		// Root components (no parent) use stored position
+		if (!comp.parentId) {
+			return { x: comp.x, y: comp.y, rotation: comp.rotation }
+		}
+
+		// Child components: recalculate based on parent's position
+		const parent = get().components.find((c) => c.id === comp.parentId)
+		if (!parent) return { x: comp.x, y: comp.y, rotation: comp.rotation }
+
+		const parentPort = parent.ports.find((p) => p.connectedTo === id)
+		if (!parentPort) return { x: comp.x, y: comp.y, rotation: comp.rotation }
+
+		// Recalculate child position based on parent's current position
+		const childLength = comp.type === 'light-bar' ? (comp as LightBarComponent).length : undefined
+		return calculateComponentPosition(parent, parentPort, comp.type, childLength)
+	},
+
 		hasHub: () => get().components.some((c) => c.type === 'hub'),
 
 		getTotalLightBarInches: () => {

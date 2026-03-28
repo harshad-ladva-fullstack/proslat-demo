@@ -6,15 +6,15 @@ import {
 	ACESFilmicToneMapping,
 	Box3,
 	Object3D,
+	Quaternion,
 	SRGBColorSpace,
 	Vector3,
 } from 'three'
 import { Loader } from '@react-three/drei'
 
 import { useRoomBuilderStore } from '@/store/useRoomBuilderStore'
-import { useCeilingDesignerStore } from '@/modules/ceiling-designer/store'
 import { TILE_SIZE, FLOOR_TILES } from '@/constants/floor-tiles'
-import { loadModelFromBlob, getWallMountQuaternion } from '@/lib/utils'
+import { loadModelFromBlob } from '@/lib/utils'
 import { generateRoom } from '@/lib/roomGenerator'
 import { DropControl } from './DropControl'
 import { SceneSaver } from './SceneSaver'
@@ -78,9 +78,8 @@ export const Scene = ({ id }: SceneProps) => {
 		resetProjectState,
 		floorTiles,
 		setRoomParamsOnly,
+		roomParams,
 	} = useRoomBuilderStore()
-
-	const resetCeilingDesigner = useCeilingDesignerStore((s) => s.resetCeilingDesigner)
 
 	// Keep a ref to current floorTiles so we can access the latest in-memory
 	// tiles inside effects without adding floorTiles as a dep (which would
@@ -193,11 +192,10 @@ export const Scene = ({ id }: SceneProps) => {
 			// Reset store to a clean state similar to a full page reload so
 			// state from the previous project doesn't leak in.
 			resetProjectState()
-			resetCeilingDesigner()
 			clearRoomModel()
 			setCabinets([])
 		}
-	}, [id, clearRoomModel, setCabinets, setFloorTiles, resetProjectState, resetCeilingDesigner])
+	}, [id, clearRoomModel, setCabinets, setFloorTiles, resetProjectState])
 
 	useEffect(() => {
 		if (!id) {
@@ -215,17 +213,36 @@ export const Scene = ({ id }: SceneProps) => {
 					const renderedGroup = await loadModelFromBlob(modelBlob)
 					addRoomModel(renderedGroup)
 
-					// Restore room dimension params so CreateRoomSettings inputs
-					// reflect the actual room. First try localStorage (most precise),
-					// then fall back to computing from the loaded GLB bounding box.
+					// Restore room dimension params
+					// Priority 1: Load from localStorage (most reliable, survives hard refresh)
+					// Priority 2: Load from project data (server backup)
+					// Priority 3: Compute from GLB bounding box
 					try {
 						const saved = id
 							? localStorage.getItem(`proslat_roomParams_${id}`)
 							: null
+						
 						if (saved) {
+							// Load from localStorage first
 							const parsed = JSON.parse(saved)
 							setRoomParamsOnly(parsed)
+							console.log('Loaded room params from localStorage:', parsed)
+						} else if (projectData.roomWidth && projectData.roomDepth && projectData.roomHeight) {
+							// Fallback to server data and save to localStorage
+							const params = {
+								width: projectData.roomWidth,
+								depth: projectData.roomDepth,
+								height: projectData.roomHeight,
+								wallColor: projectData.wallColor || '#ffffff',
+								floorColor: projectData.floorColor || '#cccccc',
+							}
+							setRoomParamsOnly(params)
+							if (id) {
+								localStorage.setItem(`proslat_roomParams_${id}`, JSON.stringify(params))
+							}
+							console.log('Loaded room params from server and saved to localStorage:', params)
 						} else {
+							// Compute from GLB bounding box
 							let floorMeshObj: Object3D | null = null
 							renderedGroup.traverse((child: Object3D) => {
 								if (
@@ -239,46 +256,73 @@ export const Scene = ({ id }: SceneProps) => {
 							const dimBox = new Box3().setFromObject(target as Object3D)
 							const dimSize = new Vector3()
 							dimBox.getSize(dimSize)
-							setRoomParamsOnly({
+							const params = {
 								width: Math.round(Math.abs(dimSize.x) * 100) / 100,
 								depth: Math.round(Math.abs(dimSize.z) * 100) / 100,
-							})
+							}
+							setRoomParamsOnly(params)
+							if (id) {
+								localStorage.setItem(`proslat_roomParams_${id}`, JSON.stringify(params))
+							}
+							console.log('Computed room params from bounding box and saved to localStorage:', params)
 						}
-					} catch {
-						// Dimension restoration is non-critical — ignore errors
+					} catch (error) {
+						console.error('Error loading room params:', error)
 					}
 				} catch (error) {
 					console.error('Failed to load model from server:', error)
 				}
 			} else if (projectData && !projectData.glbUrl) {
-				// No glbUrl - generate a room using saved params or default.
-				// Try to restore dimensions from localStorage first (for cases where
-				// the GLB hasn't been processed on the server yet but user already saved).
-				let roomWidth = 5
-				let roomDepth = 5
+				// No glbUrl - load room params from localStorage first, then server, then default
 				try {
 					const saved = id
 						? localStorage.getItem(`proslat_roomParams_${id}`)
 						: null
+					
 					if (saved) {
+						// Load from localStorage
 						const parsed = JSON.parse(saved)
-						roomWidth = parsed.width ?? 5
-						roomDepth = parsed.depth ?? 5
 						setRoomParamsOnly(parsed)
+						const room = generateRoom(parsed)
+						addRoomModel(room)
+						console.log('Generated room from localStorage params:', parsed)
+					} else if (projectData.roomWidth && projectData.roomDepth && projectData.roomHeight) {
+						// Load from server and save to localStorage
+						const params = {
+							width: projectData.roomWidth,
+							depth: projectData.roomDepth,
+							height: projectData.roomHeight,
+							wallThickness: 0.1,
+							wallColor: projectData.wallColor || '#ffffff',
+							floorColor: projectData.floorColor || '#cccccc',
+						}
+						setRoomParamsOnly(params)
+						const room = generateRoom(params)
+						addRoomModel(room)
+						if (id) {
+							localStorage.setItem(`proslat_roomParams_${id}`, JSON.stringify(params))
+						}
+						console.log('Generated room from server params and saved to localStorage:', params)
+					} else {
+						// Generate default room
+						const defaultParams = {
+							width: 5,
+							depth: 5,
+							height: 3,
+							wallThickness: 0.1,
+							wallColor: '#ffffff',
+							floorColor: '#cccccc',
+						}
+						const defaultRoom = generateRoom(defaultParams)
+						addRoomModel(defaultRoom)
+						if (id) {
+							localStorage.setItem(`proslat_roomParams_${id}`, JSON.stringify(defaultParams))
+						}
+						console.log('Generated default room and saved to localStorage')
 					}
-				} catch {
-					// If localStorage retrieval fails, use defaults
+				} catch (error) {
+					console.error('Error generating room:', error)
 				}
-
-				const defaultRoom = generateRoom({
-					width: roomWidth,
-					depth: roomDepth,
-					height: 3,
-					wallThickness: 0.1,
-					wallColor: '#ffffff',
-					floorColor: '#cccccc',
-				})
-				addRoomModel(defaultRoom)
 			}
 		}
 		loadModelFromServer()
@@ -324,9 +368,33 @@ export const Scene = ({ id }: SceneProps) => {
 	})
 
 	useEffect(() => {
-		if (tilesQuery.data) {
-			setFloorTiles(tilesQuery.data)
+		// Load tiles from localStorage first, then from server
+		const loadTiles = () => {
+			if (!projectId) return
+
+			// Try localStorage first
+			const localTiles = localStorage.getItem(`proslat_tiles_${projectId}`)
+			if (localTiles) {
+				try {
+					const parsed = JSON.parse(localTiles)
+					setFloorTiles(parsed)
+					console.log(`Loaded ${parsed.length} tiles from localStorage`)
+					return
+				} catch (error) {
+					console.error('Error parsing tiles from localStorage:', error)
+				}
+			}
+
+			// Fallback to server data
+			if (tilesQuery.data) {
+				setFloorTiles(tilesQuery.data)
+				// Save to localStorage for next time
+				localStorage.setItem(`proslat_tiles_${projectId}`, JSON.stringify(tilesQuery.data))
+				console.log(`Loaded ${tilesQuery.data.length} tiles from server and saved to localStorage`)
+			}
 		}
+
+		loadTiles()
 
 		// when entering the create-tiles route, ensure floor edit mode is enabled
 		// and if there are no tiles loaded, fill the whole floor with default tiles
@@ -335,33 +403,38 @@ export const Scene = ({ id }: SceneProps) => {
 				toggleFloorTilesEnabled()
 			}
 
+			// Check if we need to generate tiles
+			const needsGeneration = floorTilesRef.current.length === 0
+
 			// Always compute the full grid for the room and merge it with
 			// any existing tiles returned from the query. This ensures any
 			// missing cells are filled (maximal coverage) while preserving
 			// tiles that were already present.
-			if (floorMesh?.current || currentRoomModel?.model) {
-				// Prefer explicit floorMesh for accurate raycasting. If not
-				// available (custom rooms where the floor mesh wasn't named
-				// 'floor'), fall back to the whole room model and fill the
-				// bounding box (no raycasting) so the user gets a full tiled
-				// surface.
-				const target = floorMesh?.current ?? currentRoomModel?.model
-				const box = new Box3().setFromObject(target as Object3D)
-				const size = new Vector3()
-				box.getSize(size)
-				const min = box.min
-				const max = box.max
-
+			if (needsGeneration && (floorMesh?.current || currentRoomModel?.model)) {
+				// Use room parameters directly for more reliable coverage
+				console.log('Generating tiles with room params:', roomParams)
+				
+				// Calculate bounds from room parameters instead of mesh bounding box
+				// This is more reliable and ensures full coverage
+				const halfWidth = roomParams.width / 2
+				const halfDepth = roomParams.depth / 2
+				
 				const grid: ITile[] = []
 				const tileSize = TILE_SIZE || 0.41
 
-				// Add a one-tile padding around the computed bounds to avoid
-				// tiny rounding or bounding-box alignment gaps that can leave
-				// a visible hole at the room edge.
-				const startX = Math.floor((min.x - tileSize / 2) / tileSize) - 1
-				const endX = Math.ceil((max.x + tileSize / 2) / tileSize) + 1
-				const startZ = Math.floor((min.z - tileSize / 2) / tileSize) - 1
-				const endZ = Math.ceil((max.z + tileSize / 2) / tileSize) + 1
+				// Calculate grid bounds based on room dimensions with MUCH larger padding
+				// to ensure complete coverage including edges and corners
+				const padding = 10 // Increased padding to cover entire floor including edges
+				const startX = Math.floor(-halfWidth / tileSize) - padding
+				const endX = Math.ceil(halfWidth / tileSize) + padding
+				const startZ = Math.floor(-halfDepth / tileSize) - padding
+				const endZ = Math.ceil(halfDepth / tileSize) + padding
+				
+				console.log(`Room dimensions: ${roomParams.width}m x ${roomParams.depth}m`)
+				console.log(`Half dimensions: ${halfWidth}m x ${halfDepth}m`)
+				console.log(`Tile size: ${tileSize}m`)
+				console.log(`Tile grid: X from ${startX} to ${endX}, Z from ${startZ} to ${endZ}`)
+				console.log(`Total tiles: ${(endX - startX + 1) * (endZ - startZ + 1)}`)
 
 				// Build full grid
 				for (let x = startX; x <= endX; x++) {
@@ -409,7 +482,14 @@ export const Scene = ({ id }: SceneProps) => {
 					}
 				}
 
+				console.log(`Setting ${merged.length} tiles`)
 				setFloorTiles(merged)
+				
+				// Save to localStorage immediately
+				if (projectId) {
+					localStorage.setItem(`proslat_tiles_${projectId}`, JSON.stringify(merged))
+					console.log(`Saved ${merged.length} tiles to localStorage`)
+				}
 			}
 		}
 	}, [
@@ -420,6 +500,8 @@ export const Scene = ({ id }: SceneProps) => {
 		toggleFloorTilesEnabled,
 		floorMesh,
 		currentRoomModel,
+		roomParams,
+		projectId,
 	])
 
 	if (isProjectError) {
@@ -525,9 +607,11 @@ export const Scene = ({ id }: SceneProps) => {
 										)
 									}
 									quaternion={
-										getWallMountQuaternion(
-											cabinet.catalogModel.type,
-											cabinet.attachedWallName
+										new Quaternion(
+											cabinet.quaternion.x,
+											cabinet.quaternion.y,
+											cabinet.quaternion.z,
+											cabinet.quaternion.w
 										)
 									}
 								/>

@@ -106,12 +106,12 @@ export const useFloorTileHandler = () => {
 			const gridX = Math.floor((point.x + TILE_SIZE / 2) / TILE_SIZE)
 			const gridZ = Math.floor((point.z + TILE_SIZE / 2) / TILE_SIZE)
 
-			// Boundary check: reject tiles whose centre lies outside the room floor.
-			// Tiles on the boundary will still be allowed (clipping planes cut the edges).
+			// Boundary check: Allow tiles across the entire floor
+			// Increased tolerance significantly to allow full floor coverage
 			{
 				const { roomParams } = useRoomBuilderStore.getState()
-				const halfW = roomParams.width / 2
-				const halfD = roomParams.depth / 2
+				const halfW = roomParams.width / 2 + TILE_SIZE * 10 // Much larger tolerance
+				const halfD = roomParams.depth / 2 + TILE_SIZE * 10 // Much larger tolerance
 				const cx = gridX * TILE_SIZE
 				const cz = gridZ * TILE_SIZE
 				if (cx < -halfW || cx > halfW || cz < -halfD || cz > halfD) {
@@ -217,11 +217,11 @@ export const useFloorTileHandler = () => {
 			const gridX = Math.floor((point.x + TILE_SIZE / 2) / TILE_SIZE)
 			const gridZ = Math.floor((point.z + TILE_SIZE / 2) / TILE_SIZE)
 
-			// Boundary check during drag painting.
+			// Boundary check during drag painting - allow full floor coverage
 			{
 				const { roomParams } = useRoomBuilderStore.getState()
-				const halfW = roomParams.width / 2
-				const halfD = roomParams.depth / 2
+				const halfW = roomParams.width / 2 + TILE_SIZE * 10 // Much larger tolerance
+				const halfD = roomParams.depth / 2 + TILE_SIZE * 10 // Much larger tolerance
 				const cx = gridX * TILE_SIZE
 				const cz = gridZ * TILE_SIZE
 				if (cx < -halfW || cx > halfW || cz < -halfD || cz > halfD) return

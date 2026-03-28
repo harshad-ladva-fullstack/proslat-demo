@@ -46,15 +46,15 @@ function makePorts(angles: number[]): Port[] {
 }
 
 export const PORT_TEMPLATES: Record<CeilingComponentType, number[]> = {
-	hub: [0, 45, 90, 135, 180, 225, 270, 315], // 8 ports
-	'light-bar': [0, 180], // in-line: both ends
-	't-connector': [0, 90, 270], // T shape
-	'45-left-elbow': [0, 315], // 45° left
-	'45-right-elbow': [0, 45], // 45° right
-	'90-connector-left': [0, 270], // 90° left
-	'90-connector-right': [0, 90], // 90° right
-	'cross-connector': [0, 90, 180, 270], // +
-	'y-connector': [0, 120, 240], // Y
+	hub: [90, 270, 0, 180, 45, 225, 135, 315], // 8 ports (E, W, N, S, then diagonals)
+	'light-bar': [180, 0], // p0 at connection end (180), p1 at free end (0)
+	't-connector': [180, 90, 270], // p0 at connection (180), p1-2 at outputs
+	'45-left-elbow': [180, 315], // p0 at connection (180), p1 at output
+	'45-right-elbow': [180, 45], // p0 at connection (180), p1 at output
+	'90-connector-left': [180, 270], // p0 at connection (180), p1 at output
+	'90-connector-right': [180, 90], // p0 at connection (180), p1 at output
+	'cross-connector': [180, 0, 90, 270], // p0 at connection (180), p1-3 at outputs
+	'y-connector': [180, 120, 240], // p0 at connection (180), p1-2 at outputs
 }
 
 export function createPorts(type: CeilingComponentType): Port[] {

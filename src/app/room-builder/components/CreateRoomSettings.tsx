@@ -3,7 +3,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useRoomBuilderStore } from '@/store/useRoomBuilderStore'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { fetchUploadProjectModel } from '@/api/project'
+import { fetchUploadProjectModel, fetchUpdateProject } from '@/api/project'
 import { GLTFExporter } from 'three/examples/jsm/Addons.js'
 import { Object3D } from 'three'
 import type { ChangeEvent } from 'react'
@@ -24,6 +24,11 @@ export const CreateRoomSettings = () => {
 			fetchUploadProjectModel(projectId, file),
 	})
 
+	const { mutateAsync: updateProject } = useMutation({
+		mutationFn: ({ projectId, data }: { projectId: number; data: any }) =>
+			fetchUpdateProject(projectId, data),
+	})
+
 	const handleChange =
 		(field: keyof typeof roomParams) => (e: ChangeEvent<HTMLInputElement>) => {
 			const value = e.target.value
@@ -34,14 +39,15 @@ export const CreateRoomSettings = () => {
 			setRoomParams({ [field]: parsedValue as never })
 			regenerateRoom()
 
-			// Persist dimensions to localStorage so they survive a page reload or
-			// back-navigation before the user explicitly clicks "Save & Use Room".
+			// Always persist to localStorage immediately on every change
+			// This ensures data survives hard refresh (Ctrl+Shift+R)
 			if (id) {
 				const updated = { ...roomParams, [field]: parsedValue }
 				localStorage.setItem(
 					`proslat_roomParams_${id}`,
 					JSON.stringify(updated)
 				)
+				console.log('Saved room params to localStorage:', updated)
 			}
 		}
 
@@ -127,12 +133,25 @@ export const CreateRoomSettings = () => {
 
 				await uploadModel({ projectId: Number(id), file })
 
-				// Persist the current room params so they are restored when the
-				// project is reopened, even before the GLB bounding box is parsed.
+				// Save room parameters to localStorage first (primary storage)
 				localStorage.setItem(
 					`proslat_roomParams_${id}`,
 					JSON.stringify(roomParams)
 				)
+				console.log('Saved room params to localStorage:', roomParams)
+
+				// Also save to server as backup
+				await updateProject({
+					projectId: Number(id),
+					data: {
+						roomWidth: roomParams.width,
+						roomDepth: roomParams.depth,
+						roomHeight: roomParams.height,
+						wallColor: roomParams.wallColor,
+						floorColor: roomParams.floorColor,
+					},
+				})
+				console.log('Saved room params to server')
 
 				// Refresh project data so Scene.tsx loads the new GLB from the server.
 				// The glbUrl effect in Scene.tsx will then set isCustomRoom=false.
